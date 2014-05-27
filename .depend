@@ -1,0 +1,3 @@
+transform-gl.o: transform-gl.c transform.inc transform.h
+convex.o: convex.c transform.h
+perlin.o: perlin.c perlin.h
