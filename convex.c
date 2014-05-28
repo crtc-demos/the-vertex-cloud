@@ -37,6 +37,7 @@ typedef struct vertex_info
 typedef struct face_info
 {
   struct halfedge_info *halfedge;
+  vertex_info *face_vertices;
   struct face_info *next;
 } face_info;
 
@@ -69,19 +70,13 @@ add_face (halfedge_info *halfedge, face_info *prev)
 {
   face_info *newface = malloc (sizeof (face_info));
   
+  newface->face_vertices = NULL;
   newface->halfedge = halfedge;
 
   newface->next = prev;
   
   return newface;
 }
-
-/*** Slot in edge in a loop:
-
-    ,-> prev --> edge1 --.  ,-> new --> prev --> edge1 --.
-    |                    |  |                            |
-    `- edge3 <-- edge2 <-'  `----- edge3 <-- edge2 <-----'
-***/
 
 halfedge_info *
 add_halfedge (face_info *face, vertex_info *vertex)
@@ -308,7 +303,61 @@ locate_simplex_points (vertex_info *vlist)
 }
 
 void
-idle(void)
+assign_points (face_info *flist, vertex_info *vlist)
+{
+  vertex_info *vptr;
+  face_info *fptr;
+  vertex_info *vlist_out;
+  
+  for (fptr = flist; fptr != NULL; fptr = fptr->next)
+    {
+      int i;
+      vec3 tri[3];
+      halfedge_info *he = fptr->halfedge;
+      plane faceplane;
+
+      for (i = 0; i < 3; i++)
+	{
+	  memcpy (tri[i], he->vertex->vertex, sizeof (FLOATTYPE) * 3);
+	  he = he->prev;
+	}
+
+      plane_from_triangle (&faceplane, tri[0], tri[1], tri[2]);
+
+      vlist_out = NULL;
+
+      for (vptr = vlist; vptr != NULL;)
+	{
+	  FLOATTYPE dist = vec3_distance_to_plane (vptr->vertex, &faceplane);
+	  vertex_info *next = vptr->next;
+	  
+	  if (dist > 0.0)
+	    {
+	      vptr->next = fptr->face_vertices;
+	      fptr->face_vertices = vptr;
+	    }
+	  else
+	    {
+	      vptr->next = vlist_out;
+	      vlist_out = vptr;
+	    }
+
+	  vptr = next;
+	}
+
+      vlist = vlist_out;
+    }
+  
+  for (vptr = vlist; vptr != NULL;)
+    {
+      vertex_info *next = vptr->next;
+      free (vptr);
+      vptr = next;
+    }
+}
+
+void
+idle (void)
 {
   static float time;
 
@@ -321,10 +370,18 @@ idle(void)
 static face_info *faces;
 
 void
-display(void)
+display (void)
 {
-  int i;
   face_info *fptr;
+  GLfloat colours[][3] =
+    { { 1.0, 1.0, 0.5 },
+      { 1.0, 0.5, 1.0 },
+      { 1.0, 0.5, 0.5 },
+      { 0.5, 1.0, 1.0 },
+      { 0.5, 1.0, 0.5 },
+      { 0.5, 0.5, 1.0 },
+      { 0.5, 0.5, 0.5 } };
+  int faceidx = 0;
   
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   
@@ -367,10 +424,15 @@ display(void)
   glDisable (GL_LIGHTING);
   
   glBegin (GL_POINTS);
-  for (i = 0; i < NUMPOINTS; i++)
+  glPointSize (4.0f);
+  for (faceidx = 0, fptr = faces; fptr != NULL; fptr = fptr->next, faceidx++)
     {
-      glColor3f (1.0, 1.0, 1.0);
-      glVertex3fv (points[i]);
+      vertex_info *vptr;
+
+      glColor3fv (colours[faceidx & 7]);
+      
+      for (vptr = fptr->face_vertices; vptr != NULL; vptr = vptr->next)
+	glVertex3fv (vptr->vertex);
     }
   glEnd ();
   
@@ -381,7 +443,7 @@ display(void)
 }
 
 void
-gfxinit(void)
+gfxinit (void)
 {
 #ifndef DREAMCAST_KOS
   glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
@@ -399,6 +461,7 @@ gfxinit(void)
   glEnable(GL_COLOR_MATERIAL);
 #endif
   glEnable(GL_CULL_FACE);
+  glEnable(GL_PROGRAM_POINT_SIZE);
   glMatrixMode(GL_PROJECTION);
   gluPerspective( /* field of view in degree */ 40.0,
   /* aspect ratio */ 1.0,
@@ -411,7 +474,8 @@ gfxinit(void)
 }
 
 /* glut main function */
-int main(int argc, char **argv)
+int
+main (int argc, char **argv)
 {
   int i;
   vertex_info *vlist;
@@ -425,6 +489,7 @@ int main(int argc, char **argv)
   
   vlist = vertex_list (points, NUMPOINTS);
   faces = locate_simplex_points (vlist);
+  assign_points (faces, vlist);
   
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
