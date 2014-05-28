@@ -64,7 +64,6 @@ test3 (void)
   vec3 vec2 = { 0.0, 0.0, 0.0 };
   vec3 axis = { 0.0, 1.0, 0.0 };
   mat33 mat;
-  mat33 xlate;
   
   printf ("test 3:\n");
   
@@ -92,24 +91,34 @@ void test4 (void)
   vec3 a = { 5.0, 3.0, -1.0 };
   vec3 b = { 4.0, 3.0, -1.0 };
   vec3 c = { 0.0, 3.0, 1.0 };
-  vec3 norm;
-  FLOATTYPE offset;
+  plane myplane;
   
   printf ("test 4:\n");
   
-  plane_from_triangle (norm, &offset, a, b, c);
+  plane_from_triangle (&myplane, a, b, c);
   
-  vec3_dump (stdout, norm);
-  printf ("offset: %f\n", offset);
+  vec3_dump (stdout, myplane.normal);
+  printf ("offset: %f\n", myplane.offset);
   
   memcpy (a, (vec3) { 5.0, -1.0, -1.0 }, sizeof (GLfloat) * 3);
   memcpy (b, (vec3) { 5.0,  1.0, -1.0 }, sizeof (GLfloat) * 3);
   memcpy (c, (vec3) { 5.0,  0.0,  1.0 }, sizeof (GLfloat) * 3);
   
-  plane_from_triangle (norm, &offset, a, b, c);
+  plane_from_triangle (&myplane, a, b, c);
   
-  vec3_dump (stdout, norm);
-  printf ("offset: %f\n", offset);
+  vec3_dump (stdout, myplane.normal);
+  printf ("offset: %f\n", myplane.offset);
+  
+  memcpy (a, (vec3) { 0.0, 0.0, 0.0 }, sizeof (GLfloat) * 3);
+  memcpy (b, (vec3) { 3.0, 0.0, 0.0 }, sizeof (GLfloat) * 3);
+  memcpy (c, (vec3) { 6.0, 0.0, 0.0 }, sizeof (GLfloat) * 3);
+  
+  vec3_dump (stdout, a);
+  printf ("dist: %f\n", vec3_distance_to_plane (a, &myplane));
+  vec3_dump (stdout, b);
+  printf ("dist: %f\n", vec3_distance_to_plane (b, &myplane));
+  vec3_dump (stdout, c);
+  printf ("dist: %f\n", vec3_distance_to_plane (c, &myplane));
 }
 
 int main (int argc, char* argv[])

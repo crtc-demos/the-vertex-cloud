@@ -700,20 +700,28 @@ vec3_distance_to_line (const vec3 pt, const vec3 a, const vec3 b)
 }
 
 void
-plane_from_triangle (vec3 norm, FLOATTYPE *offset, const vec3 a, const vec3 b,
-		     const vec3 c)
+plane_from_triangle (plane *theplane, const vec3 a, const vec3 b, const vec3 c)
 {
   vec3 ab, ac;
-  vec3 scaled_norm;
+  vec3 norm, scaled_norm;
   
   vec3_sub_vec3 (ab, b, a);
   vec3_sub_vec3 (ac, c, a);
   vec3_cross_vec3 (norm, ab, ac);
   vec3_normalize (norm, norm);
   
+  memcpy (theplane->normal, norm, sizeof (FLOATTYPE) * 3);
+  
   vec3_scale (scaled_norm, norm, vec3_dot_vec3 (a, norm));
  
-  *offset = vec3_length (scaled_norm);
+  theplane->offset = vec3_length (scaled_norm);
+}
+
+FLOATTYPE
+vec3_distance_to_plane (const vec3 pt, const plane *theplane)
+{
+  FLOATTYPE dp = vec3_dot_vec3 (theplane->normal, pt);
+  return dp - theplane->offset;
 }
 
 void

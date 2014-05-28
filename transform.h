@@ -15,6 +15,11 @@ typedef FLOATTYPE vec4[4];
 typedef FLOATTYPE mat33[9];
 typedef FLOATTYPE mat44[16];
 
+typedef struct {
+  vec3 normal;
+  FLOATTYPE offset;
+} plane;
+
 extern void mat33_identity (mat33 mat);
 extern void vec3_zero (vec3 vec);
 extern void mat33_mul_vec3 (vec3 dest, const mat33 mat, const vec3 src);
@@ -58,8 +63,8 @@ extern int rotate_vec3_to_vec3 (vec3 axis, FLOATTYPE *angle, const vec3 from,
 extern FLOATTYPE vec3_distance_vec3 (const vec3 a, const vec3 b);
 extern void vec3_scale (vec3, const vec3, FLOATTYPE);
 extern FLOATTYPE vec3_distance_to_line (const vec3, const vec3, const vec3);
-extern void plane_from_triangle (vec3, FLOATTYPE *, const vec3, const vec3,
-				 const vec3);
+extern void plane_from_triangle (plane *, const vec3, const vec3, const vec3);
+extern FLOATTYPE vec3_distance_to_plane (const vec3, const plane *);
 extern void vec3_dump (FILE* to, const vec3 vec);
 extern void mat33_dump (FILE* to, const mat33 mat);
 extern void mat44_dump (FILE* to, const mat44 mat);

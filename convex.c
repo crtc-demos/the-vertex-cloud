@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <GL/glut.h>
 
 #include <math.h>
@@ -70,8 +71,7 @@ add_face (halfedge_info *halfedge, face_info *prev)
   
   newface->halfedge = halfedge;
 
-  prev->next = newface;
-  newface->next = NULL;
+  newface->next = prev;
   
   return newface;
 }
@@ -226,6 +226,8 @@ locate_simplex_points (vertex_info *vlist)
   int i, extremities;
   FLOATTYPE max_dist = 0.0;
   int furthest_extremity;
+  vertex_info *sa, *sb, *sc, *sd;
+  plane base;
   
   for (i = 0; i < 3; i++)
     {
@@ -260,13 +262,15 @@ locate_simplex_points (vertex_info *vlist)
   
   furthest_extremity = -1;
 
+  sa = loptr[extremities];
+  sb = hiptr[extremities];
+
   for (i = 0; i < 6; i++)
     {
       FLOATTYPE dist
         = vec3_distance_to_line (i < 3 ? loptr[i]->vertex
-				       : hiptr[i - 3]->vertex,
-				 loptr[extremities]->vertex,
-				 hiptr[extremities]->vertex);
+				       : hiptr[i - 3]->vertex, sa->vertex,
+				 sb->vertex);
 
       dist = fabs (dist);
 
@@ -277,22 +281,30 @@ locate_simplex_points (vertex_info *vlist)
 	}
     }
   
- /* printf ("%f\n", vec3_distance_to_line (loptr[0]->vertex,
-		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
-  printf ("%f\n", vec3_distance_to_line (loptr[1]->vertex,
-		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
-  printf ("%f\n", vec3_distance_to_line (loptr[2]->vertex,
-		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
-  printf ("%f\n", vec3_distance_to_line (hiptr[0]->vertex,
-		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
-  printf ("%f\n", vec3_distance_to_line (hiptr[1]->vertex,
-		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
-  printf ("%f\n", vec3_distance_to_line (hiptr[2]->vertex,
-		    loptr[extremities]->vertex, hiptr[extremities]->vertex));*/
-
+  sc = (furthest_extremity < 3) ? loptr[furthest_extremity]
+				: hiptr[furthest_extremity - 3],
+  
   printf ("furthest (%d) = %f\n", furthest_extremity, max_dist);
 
-  return NULL;
+  plane_from_triangle (&base, sa->vertex, sb->vertex, sc->vertex);
+  
+  max_dist = 0.0;
+  sd = NULL;
+  
+  for (vptr = vlist; vptr != NULL; vptr = vptr->next)
+    {
+      FLOATTYPE pt_to_plane = vec3_distance_to_plane (vptr->vertex, &base);
+      
+      if (fabs (pt_to_plane) > fabs (max_dist))
+        {
+          max_dist = pt_to_plane;
+	  sd = vptr;
+	}
+    }
+
+  assert (sd != NULL);
+
+  return initial_simplex (sa, sb, sc, sd);
 }
 
 void
@@ -306,23 +318,50 @@ idle(void)
   glutPostRedisplay();
 }
 
+static face_info *faces;
+
 void
 display(void)
 {
   int i;
+  face_info *fptr;
   
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   
   glPushMatrix ();
   
   glRotatef (rot * 5, 0.0, 1.0, 0.0);
+  glRotatef (rot * 4.85, 1.0, 0.0, 0.0);
   
   glEnable (GL_LIGHTING);
   
   glBegin (GL_TRIANGLES);
-  glVertex3f (-1.0, -1.0, 0.0);
-  glVertex3f (1.0, -1.0, 0.0);
-  glVertex3f (0.0, 1.0, 0.0);
+  for (fptr = faces; fptr != NULL; fptr = fptr->next)
+    {
+      halfedge_info *first = fptr->halfedge, *hptr;
+      vec3 pts[3];
+      int i;
+      
+      hptr = first;
+      for (i = 0; i < 3; i++)
+        {
+          memcpy (pts[i], hptr->vertex->vertex, sizeof (GLfloat) * 3);
+	  hptr = hptr->prev;
+	}
+      vec3_sub_vec3 (pts[2], pts[2], pts[0]);
+      vec3_sub_vec3 (pts[1], pts[1], pts[0]);
+      vec3_cross_vec3 (pts[0], pts[1], pts[2]);
+      vec3_normalize (pts[0], pts[0]);
+      glNormal3fv (pts[0]);
+
+      hptr = first;
+      do
+        {
+	  glVertex3fv (hptr->vertex->vertex);
+          hptr = hptr->prev;
+	}
+      while (hptr != first);
+    }
   glEnd ();
   
   glDisable (GL_LIGHTING);
@@ -385,7 +424,7 @@ int main(int argc, char **argv)
     }
   
   vlist = vertex_list (points, NUMPOINTS);
-  locate_simplex_points (vlist);
+  faces = locate_simplex_points (vlist);
   
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
