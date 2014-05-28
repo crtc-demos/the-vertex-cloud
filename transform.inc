@@ -671,7 +671,7 @@ vec3_distance_vec3 (const vec3 a, const vec3 b)
 }
 
 void
-vec3_scale (vec3 out, vec3 vec, FLOATTYPE scale)
+vec3_scale (vec3 out, const vec3 vec, FLOATTYPE scale)
 {
   int i;
   
@@ -697,6 +697,23 @@ vec3_distance_to_line (const vec3 pt, const vec3 a, const vec3 b)
   vec3_add_vec3 (intercept, a, intercept);
   
   return vec3_distance_vec3 (pt, intercept);
+}
+
+void
+plane_from_triangle (vec3 norm, FLOATTYPE *offset, const vec3 a, const vec3 b,
+		     const vec3 c)
+{
+  vec3 ab, ac;
+  vec3 scaled_norm;
+  
+  vec3_sub_vec3 (ab, b, a);
+  vec3_sub_vec3 (ac, c, a);
+  vec3_cross_vec3 (norm, ab, ac);
+  vec3_normalize (norm, norm);
+  
+  vec3_scale (scaled_norm, norm, vec3_dot_vec3 (a, norm));
+ 
+  *offset = vec3_length (scaled_norm);
 }
 
 void

@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string.h>
 
 #include <GL/gl.h>
 
@@ -86,10 +87,36 @@ test3 (void)
   vec3_dump (stdout, vec2);
 }
 
+void test4 (void)
+{
+  vec3 a = { 5.0, 3.0, -1.0 };
+  vec3 b = { 4.0, 3.0, -1.0 };
+  vec3 c = { 0.0, 3.0, 1.0 };
+  vec3 norm;
+  FLOATTYPE offset;
+  
+  printf ("test 4:\n");
+  
+  plane_from_triangle (norm, &offset, a, b, c);
+  
+  vec3_dump (stdout, norm);
+  printf ("offset: %f\n", offset);
+  
+  memcpy (a, (vec3) { 5.0, -1.0, -1.0 }, sizeof (GLfloat) * 3);
+  memcpy (b, (vec3) { 5.0,  1.0, -1.0 }, sizeof (GLfloat) * 3);
+  memcpy (c, (vec3) { 5.0,  0.0,  1.0 }, sizeof (GLfloat) * 3);
+  
+  plane_from_triangle (norm, &offset, a, b, c);
+  
+  vec3_dump (stdout, norm);
+  printf ("offset: %f\n", offset);
+}
+
 int main (int argc, char* argv[])
 {
   test1 ();
   test2 ();
   test3 ();
+  test4 ();
   return 0;
 }

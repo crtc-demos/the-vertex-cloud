@@ -56,8 +56,10 @@ extern void mat44_extract_rotation (mat44 dst, const mat44 src);
 extern int rotate_vec3_to_vec3 (vec3 axis, FLOATTYPE *angle, const vec3 from,
 				const vec3 to);
 extern FLOATTYPE vec3_distance_vec3 (const vec3 a, const vec3 b);
-extern void vec3_scale (vec3, vec3, FLOATTYPE);
+extern void vec3_scale (vec3, const vec3, FLOATTYPE);
 extern FLOATTYPE vec3_distance_to_line (const vec3, const vec3, const vec3);
+extern void plane_from_triangle (vec3, FLOATTYPE *, const vec3, const vec3,
+				 const vec3);
 extern void vec3_dump (FILE* to, const vec3 vec);
 extern void mat33_dump (FILE* to, const mat33 mat);
 extern void mat44_dump (FILE* to, const mat44 mat);

@@ -137,8 +137,8 @@ vertex_list (GLfloat points[][3], int numpoints)
 	  /  |  \
 	 /   |   \
 	/    |C   \
-       /  ..-+-..  \
-      /..-       -..\
+       /  __-+-__  \
+      /_--       --_\
    A ----------------- B
 
 ***/
@@ -224,6 +224,8 @@ locate_simplex_points (vertex_info *vlist)
   vertex_info *loptr[3], *hiptr[3];
   vertex_info *vptr;
   int i, extremities;
+  FLOATTYPE max_dist = 0.0;
+  int furthest_extremity;
   
   for (i = 0; i < 3; i++)
     {
@@ -256,7 +258,26 @@ locate_simplex_points (vertex_info *vlist)
   else
     extremities = 2;
   
-  printf ("%f\n", vec3_distance_to_line (loptr[0]->vertex,
+  furthest_extremity = -1;
+
+  for (i = 0; i < 6; i++)
+    {
+      FLOATTYPE dist
+        = vec3_distance_to_line (i < 3 ? loptr[i]->vertex
+				       : hiptr[i - 3]->vertex,
+				 loptr[extremities]->vertex,
+				 hiptr[extremities]->vertex);
+
+      dist = fabs (dist);
+
+      if (furthest_extremity == -1 || dist > max_dist)
+        {
+	  furthest_extremity = i;
+	  max_dist = dist;
+	}
+    }
+  
+ /* printf ("%f\n", vec3_distance_to_line (loptr[0]->vertex,
 		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
   printf ("%f\n", vec3_distance_to_line (loptr[1]->vertex,
 		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
@@ -267,7 +288,9 @@ locate_simplex_points (vertex_info *vlist)
   printf ("%f\n", vec3_distance_to_line (hiptr[1]->vertex,
 		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
   printf ("%f\n", vec3_distance_to_line (hiptr[2]->vertex,
-		    loptr[extremities]->vertex, hiptr[extremities]->vertex));
+		    loptr[extremities]->vertex, hiptr[extremities]->vertex));*/
+
+  printf ("furthest (%d) = %f\n", furthest_extremity, max_dist);
 
   return NULL;
 }
