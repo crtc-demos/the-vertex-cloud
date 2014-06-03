@@ -38,6 +38,7 @@ typedef struct face_info
 {
   struct halfedge_info *halfedge;
   vertex_info *face_vertices;
+  int visited_stamp;
   struct face_info *next;
 } face_info;
 
@@ -50,6 +51,18 @@ typedef struct halfedge_info
   struct halfedge_info *prev;
   struct halfedge_info *next;
 } halfedge_info;
+
+typedef struct faceref_list
+{
+  face_info *face;
+  struct faceref_list *next;
+} faceref_list;
+
+typedef struct hfedgeref_list
+{
+  halfedge_info *halfedge;
+  struct hfedgeref_list *next;
+} hfedgeref_list;
 
 vertex_info *
 add_vertex (vec3 vec, halfedge_info *halfedge, vertex_info *prev)
@@ -71,11 +84,40 @@ add_face (halfedge_info *halfedge, face_info *prev)
   face_info *newface = malloc (sizeof (face_info));
   
   newface->face_vertices = NULL;
+  newface->visited_stamp = 0;
   newface->halfedge = halfedge;
 
   newface->next = prev;
   
   return newface;
+}
+
+void
+push_face (face_info *face, faceref_list **stack)
+{
+  faceref_list *newfr = malloc (sizeof (faceref_list));
+  
+  newfr->face = face;
+  newfr->next = *stack;
+  
+  *stack = newfr;
+}
+
+face_info *
+pop_face (faceref_list **stack)
+{
+  face_info *popped;
+  faceref_list *next;
+  
+  assert (*stack != NULL);
+  
+  next = (*stack)->next;
+  popped = (*stack)->face;
+
+  free (*stack);
+  *stack = next;
+
+  return popped;
 }
 
 halfedge_info *
@@ -85,12 +127,40 @@ add_halfedge (face_info *face, vertex_info *vertex)
   
   newhalfedge->face = face;
   newhalfedge->vertex = vertex;
+
   newhalfedge->opposite = NULL;
-  
   newhalfedge->next = NULL;
   newhalfedge->prev = NULL;
   
   return newhalfedge;
+}
+
+void
+push_halfedge (halfedge_info *halfedge, hfedgeref_list **list)
+{
+  hfedgeref_list *newhe = malloc (sizeof (hfedgeref_list));
+  
+  newhe->halfedge = halfedge;
+  newhe->next = *list;
+  
+  *list = newhe;
+}
+
+halfedge_info *
+pop_halfedge (hfedgeref_list **list)
+{
+  halfedge_info *halfedge;
+  hfedgeref_list *next;
+  
+  assert (*list != NULL);
+  
+  next = (*list)->next;
+  halfedge = (*list)->halfedge;
+  
+  free (*list);
+  *list = next;
+  
+  return halfedge;
 }
 
 static void
@@ -132,9 +202,9 @@ vertex_list (GLfloat points[][3], int numpoints)
 	  /  |  \
 	 /   |   \
 	/    |C   \
-       /  __-+-__  \
-      /_--       --_\
-   A ----------------- B
+       /   _,+._   \
+      /_,-'     '-._\
+   A *---------------* B
 
 ***/
 
@@ -357,6 +427,124 @@ assign_points (face_info *flist, vertex_info *vlist)
 }
 
 void
+plane_from_face (plane *outplane, const face_info *face)
+{
+  vec3 pts[3];
+  int i;
+  halfedge_info *hptr;
+  
+  for (i = 0, hptr = face->halfedge; i < 3; i++, hptr = hptr->prev)
+    memcpy (pts[i], hptr->vertex->vertex, sizeof (GLfloat) * 3);
+  
+  plane_from_triangle (outplane, pts[0], pts[1], pts[2]);
+}
+
+static void
+visible_faces_1 (faceref_list **flist, int stamp,
+		 hfedgeref_list **horizon_edges, face_info *face,
+		 const plane *face_plane, const vertex_info *pt)
+{
+  halfedge_info *first = face->halfedge, *heptr;
+  
+  face->visited_stamp = stamp;
+  
+  push_face (face, flist);
+
+  heptr = first;
+
+  do
+    {
+      halfedge_info *opposite = heptr->opposite;
+      plane opp_plane;
+      face_info *opp_face = opposite->face;
+      
+      plane_from_face (&opp_plane, opp_face);
+      
+      if (vec3_distance_to_plane (pt->vertex, &opp_plane) < 0.0)
+        {
+	  printf ("setting horizon edge on: %p\n", heptr);
+	  push_halfedge (heptr, horizon_edges);
+	}
+      else if (opp_face->visited_stamp != stamp)
+	visible_faces_1 (flist, stamp, horizon_edges, opp_face, face_plane, pt);
+
+      heptr = heptr->next;
+    }
+  while (heptr != first);
+}
+
+faceref_list *
+visible_faces (face_info *face, int *vis_stamp, hfedgeref_list **horizon_edges,
+	       const plane *face_plane, const vertex_info *pt)
+{
+  faceref_list *visible = NULL;
+  static int stamp = 1;
+  
+  assert (*horizon_edges == NULL);
+  
+  visible_faces_1 (&visible, stamp, horizon_edges, face, face_plane, pt);
+  
+  *vis_stamp = stamp;
+  
+  stamp++;
+  
+  return visible;
+}
+
+face_info *
+replace_faces (faceref_list *visible, int stamp, hfedgeref_list **horizon_edges,
+	       vertex_info *pt)
+{
+  halfedge_info *first_p2h = NULL, *prev_h2p = NULL;
+  face_info *flist = NULL;
+  
+  while (*horizon_edges)
+    {
+      halfedge_info *horizon_edge = pop_halfedge (horizon_edges);
+      face_info *newface;
+      halfedge_info *horiz_to_pt;
+      halfedge_info *pt_to_horiz;
+
+      printf ("horizon edge %p: prev=%p, next=%p\n", horizon_edge,
+	      horizon_edge->prev, horizon_edge->next);
+
+      flist = newface = add_face (horizon_edge, flist);
+
+      horiz_to_pt = add_halfedge (newface, horizon_edge->opposite->vertex);
+      pt_to_horiz = add_halfedge (newface, pt);
+
+      horizon_edge->next = horiz_to_pt;
+      horizon_edge->prev = pt_to_horiz;
+
+      horiz_to_pt->next = pt_to_horiz;
+      horiz_to_pt->prev = horizon_edge;
+
+      pt_to_horiz->next = horizon_edge;
+      pt_to_horiz->prev = horiz_to_pt;
+
+      if (!first_p2h)
+	{
+	  horiz_to_pt->opposite = pt_to_horiz;
+	  pt_to_horiz->opposite = horiz_to_pt;
+	  first_p2h = pt_to_horiz;
+	}
+      else
+	{
+	  prev_h2p->opposite = pt_to_horiz;
+	  pt_to_horiz->opposite = prev_h2p;
+	  first_p2h->opposite = horiz_to_pt;
+	  horiz_to_pt->opposite = first_p2h;
+	}
+
+      prev_h2p = horiz_to_pt;
+
+      horizon_edge->face = newface;
+    }
+  
+  return flist;
+}
+
+void
 idle (void)
 {
   static float time;
@@ -479,6 +667,8 @@ main (int argc, char **argv)
 {
   int i;
   vertex_info *vlist;
+  faceref_list *facestack = NULL;
+  face_info *fptr;
   
   for (i = 0; i < NUMPOINTS; i++)
     {
@@ -491,6 +681,43 @@ main (int argc, char **argv)
   faces = locate_simplex_points (vlist);
   assign_points (faces, vlist);
   
+  for (fptr = faces; fptr != NULL; fptr = fptr->next)
+    if (fptr->face_vertices)
+      push_face (fptr, &facestack);
+  
+  if /* while */ (facestack != NULL)
+    {
+      face_info *face = pop_face (&facestack);
+      plane faceplane;
+      vertex_info *most_distant = NULL, *vptr;
+      FLOATTYPE distance = 0.0;
+      faceref_list *frlist;
+      int vis_stamp;
+      hfedgeref_list *horizon_edges = NULL;
+      
+      plane_from_face (&faceplane, face);
+
+      for (vptr = face->face_vertices; vptr != NULL; vptr = vptr->next)
+        {
+	  FLOATTYPE thispt = vec3_distance_to_plane (vptr->vertex, &faceplane);
+
+	  assert (thispt >= 0.0);
+
+	  if (thispt > distance)
+	    {
+	      distance = thispt;
+	      most_distant = vptr;
+	    }
+	}
+      
+      frlist = visible_faces (face, &vis_stamp, &horizon_edges, &faceplane,
+			      most_distant);
+      for (; frlist != NULL; frlist = frlist->next)
+        printf ("visible face: %p\n", frlist->face);
+
+      replace_faces (frlist, vis_stamp, &horizon_edges, most_distant);
+    }
+  
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
   glutCreateWindow("Convex hull");
@@ -498,5 +725,6 @@ main (int argc, char **argv)
   glutIdleFunc(idle);
   gfxinit();
   glutMainLoop();
-  return 0;             /* ANSI C requires main to return int. */
+
+  return 0;
 }
