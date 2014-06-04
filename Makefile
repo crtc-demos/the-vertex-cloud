@@ -1,7 +1,7 @@
 
 	CC = 		gcc
 	STRIP =		strip
-	CFLAGS =	-O3 -ffast-math -fomit-frame-pointer -W -Wall -g
+	CFLAGS =	-O0 -fomit-frame-pointer -W -Wall -g
 	DEPFLAGS =
 	LIBS =		-lGL -lGLU -lglut -lm
 	LDFLAGS =	-g

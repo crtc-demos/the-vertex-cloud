@@ -83,6 +83,8 @@ add_face (halfedge_info *halfedge, face_info *prev)
 {
   face_info *newface = malloc (sizeof (face_info));
   
+  assert (halfedge != NULL);
+  
   newface->face_vertices = NULL;
   newface->visited_stamp = 0;
   newface->halfedge = halfedge;
@@ -274,10 +276,10 @@ initial_simplex (vertex_info *va, vertex_info *vb, vertex_info *vc,
   edge_loop (loop, 3, f4);
   
   /* Set some (arbitrary) half-edges for vertices.  */
-  va->halfedge = he_ab;
+  /*va->halfedge = he_ab;
   vb->halfedge = he_bc;
   vc->halfedge = he_cd;
-  vd->halfedge = he_da;
+  vd->halfedge = he_da;*/
   
   return f4;
 }
@@ -418,12 +420,12 @@ assign_points (face_info *flist, vertex_info *vlist)
       vlist = vlist_out;
     }
   
-  for (vptr = vlist; vptr != NULL;)
+  /*for (vptr = vlist; vptr != NULL;)
     {
       vertex_info *next = vptr->next;
       free (vptr);
       vptr = next;
-    }
+    }*/
 }
 
 void
@@ -495,18 +497,19 @@ face_info *
 replace_faces (faceref_list *visible, int stamp, hfedgeref_list **horizon_edges,
 	       vertex_info *pt)
 {
-  halfedge_info *first_p2h = NULL, *prev_h2p = NULL;
-  face_info *flist = NULL;
+  face_info *flist = NULL, *fptr;
+  hfedgeref_list *hfref_ptr;
   
-  while (*horizon_edges)
+  for (hfref_ptr = *horizon_edges; hfref_ptr != NULL;
+       hfref_ptr = hfref_ptr->next)
     {
-      halfedge_info *horizon_edge = pop_halfedge (horizon_edges);
+      halfedge_info *horizon_edge = hfref_ptr->halfedge;
       face_info *newface;
       halfedge_info *horiz_to_pt;
       halfedge_info *pt_to_horiz;
 
-      printf ("horizon edge %p: prev=%p, next=%p\n", horizon_edge,
-	      horizon_edge->prev, horizon_edge->next);
+      /*printf ("horizon edge %p: prev=%p, next=%p\n", horizon_edge,
+	      horizon_edge->prev, horizon_edge->next);*/
 
       flist = newface = add_face (horizon_edge, flist);
 
@@ -522,23 +525,57 @@ replace_faces (faceref_list *visible, int stamp, hfedgeref_list **horizon_edges,
       pt_to_horiz->next = horizon_edge;
       pt_to_horiz->prev = horiz_to_pt;
 
-      if (!first_p2h)
-	{
-	  horiz_to_pt->opposite = pt_to_horiz;
-	  pt_to_horiz->opposite = horiz_to_pt;
-	  first_p2h = pt_to_horiz;
-	}
-      else
-	{
-	  prev_h2p->opposite = pt_to_horiz;
-	  pt_to_horiz->opposite = prev_h2p;
-	  first_p2h->opposite = horiz_to_pt;
-	  horiz_to_pt->opposite = first_p2h;
-	}
+      assert (horizon_edge->vertex->halfedge == NULL);
 
-      prev_h2p = horiz_to_pt;
-
+      horizon_edge->vertex->halfedge = horizon_edge;
       horizon_edge->face = newface;
+    }
+  
+  for (hfref_ptr = *horizon_edges; hfref_ptr != NULL;
+       hfref_ptr = hfref_ptr->next)
+    {
+      halfedge_info *horizon_edge = hfref_ptr->halfedge;
+      halfedge_info *next_horiz = horizon_edge->opposite->vertex->halfedge;
+      printf ("chasing horizon: %p next: %p\n", horizon_edge, next_horiz);
+      /* Join up opposite edges.  */
+      horizon_edge->next->opposite = next_horiz->prev;
+      next_horiz->prev->opposite = horizon_edge->next;
+    }
+  
+  /* Clear vertex halfedge pointers.  */
+  while (*horizon_edges)
+    {
+      halfedge_info *horizon_edge = pop_halfedge (horizon_edges);
+      horizon_edge->vertex->halfedge = NULL;
+    }
+  
+  printf ("visible: %p\n", visible);
+  
+  while (visible)
+    {
+      face_info *face = pop_face (&visible);
+      halfedge_info *first, *heptr;
+      
+      first = heptr = face->halfedge;
+      
+      /*do
+        {
+	  halfedge_info *next = heptr->next;
+
+	  if (heptr->opposite->opposite != heptr
+	      || heptr->next->prev != heptr
+	      || heptr->prev->next != heptr)
+	    {
+	      printf ("detached halfedge: %p\n", heptr);
+	      free (heptr);
+	    }
+
+	  heptr = next;
+	}
+      while (heptr != first);*/
+      
+      printf ("detached face: %p\n", face);
+      face->visited_stamp = -1;
     }
   
   return flist;
@@ -580,12 +617,17 @@ display (void)
   
   glEnable (GL_LIGHTING);
   
+  glColor3f (1.0, 1.0, 1.0);
+  
   glBegin (GL_TRIANGLES);
   for (fptr = faces; fptr != NULL; fptr = fptr->next)
     {
       halfedge_info *first = fptr->halfedge, *hptr;
       vec3 pts[3];
       int i;
+      
+      if (fptr->visited_stamp == -1)
+        continue;
       
       hptr = first;
       for (i = 0; i < 3; i++)
@@ -616,6 +658,9 @@ display (void)
   for (faceidx = 0, fptr = faces; fptr != NULL; fptr = fptr->next, faceidx++)
     {
       vertex_info *vptr;
+
+      if (fptr->visited_stamp == -1)
+        continue;
 
       glColor3fv (colours[faceidx & 7]);
       
@@ -685,15 +730,20 @@ main (int argc, char **argv)
     if (fptr->face_vertices)
       push_face (fptr, &facestack);
   
-  if /* while */ (facestack != NULL)
+  while (facestack != NULL)
     {
       face_info *face = pop_face (&facestack);
       plane faceplane;
       vertex_info *most_distant = NULL, *vptr;
       FLOATTYPE distance = 0.0;
-      faceref_list *frlist;
+      faceref_list *frlist, *frptr;
       int vis_stamp;
       hfedgeref_list *horizon_edges = NULL;
+      face_info *new_faces = NULL, *prevface;
+      
+      /* Ignore deleted faces.  */
+      if (face->visited_stamp == -1)
+        continue;
       
       plane_from_face (&faceplane, face);
 
@@ -701,7 +751,7 @@ main (int argc, char **argv)
         {
 	  FLOATTYPE thispt = vec3_distance_to_plane (vptr->vertex, &faceplane);
 
-	  assert (thispt >= 0.0);
+	  assert (thispt > 0.0);
 
 	  if (thispt > distance)
 	    {
@@ -709,13 +759,45 @@ main (int argc, char **argv)
 	      most_distant = vptr;
 	    }
 	}
+
+      assert (most_distant && distance > 0.0);
       
       frlist = visible_faces (face, &vis_stamp, &horizon_edges, &faceplane,
 			      most_distant);
-      for (; frlist != NULL; frlist = frlist->next)
-        printf ("visible face: %p\n", frlist->face);
+      for (frptr = frlist; frptr != NULL; frptr = frptr->next)
+        printf ("visible face: %p\n", frptr->face);
 
-      replace_faces (frlist, vis_stamp, &horizon_edges, most_distant);
+      new_faces = replace_faces (frlist, vis_stamp, &horizon_edges,
+				 most_distant);
+
+      /*for (prevface = NULL, fptr = faces; fptr != NULL;)
+        {
+	  face_info *next = fptr->next;
+
+	  if (fptr->visited_stamp == -1)
+	    {
+	      printf ("delete face: %p\n", fptr);
+	      free (fptr);
+
+	      if (prevface)
+	        prevface->next = next;
+	      else
+		faces = next;
+	    }
+
+	  prevface = fptr;
+	  fptr = next;
+	}*/
+
+      /* Attach new faces to polyhedron (append list in-place).  */
+      for (fptr = new_faces; fptr != NULL; fptr = fptr->next)
+	if (fptr->next == NULL)
+	  {
+	    fptr->next = faces;
+	    break;
+	  }
+
+      faces = new_faces;
     }
   
   glutInit(&argc, argv);
