@@ -21,7 +21,7 @@ GLfloat mat_shininess[] = {20.0f};
 
 GLfloat rot;
 
-#define NUMPOINTS 20000
+#define NUMPOINTS 3000
 
 GLfloat points[NUMPOINTS][3];
 
@@ -201,13 +201,13 @@ vertex_list (GLfloat points[][3], int numpoints)
              .
 	    /|\
 	   / | \
-	  /  |  \
-	 /   |   \
+    F4 -> /  |  \ <- F3
+	 /   | F1\ 
 	/    |C   \
        /   _,+._   \
       /_,-'     '-._\
    A *---------------* B
-
+           ^ F2
 ***/
 
 face_info *
@@ -377,20 +377,27 @@ locate_simplex_points (vertex_info *vlist)
     }
 
   assert (sd != NULL);
-
-  return initial_simplex (sa, sb, sc, sd);
+  
+  if (max_dist < 0.0)
+    {
+      printf ("initial simplex the right way round\n");
+      return initial_simplex (sa, sb, sc, sd);
+    }
+  else
+    {
+      printf ("initial simplex inside-out\n");
+      return initial_simplex (sb, sa, sc, sd);
+    }
 }
 
 void
-assign_points (face_info *flist, vertex_info *vlist)
+assign_points (face_info *flist, faceref_list *frlist)
 {
   vertex_info *vptr;
   face_info *fptr;
-  vertex_info *vlist_out;
   
-  /* Don't count polygon's vertices in its point set (avoiding
-     floating-point precision issues with distance-to-plane
-     function).  */
+  /* Don't count the new polygons' vertices in their point sets (avoiding
+     floating-point precision issues with distance-to-plane function).  */
   for (fptr = flist; fptr != NULL; fptr = fptr->next)
     {
       halfedge_info *he = fptr->halfedge;
@@ -410,6 +417,7 @@ assign_points (face_info *flist, vertex_info *vlist)
       vec3 tri[3];
       halfedge_info *he = fptr->halfedge;
       plane faceplane;
+      faceref_list *frptr;
 
       for (i = 0; i < 3; i++)
 	{
@@ -421,29 +429,32 @@ assign_points (face_info *flist, vertex_info *vlist)
 
       plane_from_triangle (&faceplane, tri[0], tri[1], tri[2]);
 
-      vlist_out = NULL;
+      for (frptr = frlist; frptr != NULL; frptr = frptr->next)
+        {
+          vertex_info *vlist_out = NULL;
 
-      for (vptr = vlist; vptr != NULL;)
-	{
-	  FLOATTYPE dist = vec3_distance_to_plane (vptr->vertex, &faceplane);
-	  vertex_info *next = vptr->next;
-	  
-	  if (dist > 0.0 && vptr->halfedge == NULL)
+	  for (vptr = frptr->face->face_vertices; vptr != NULL;)
 	    {
-	      vptr->next = fptr->face_vertices;
-	      fptr->face_vertices = vptr;
-	    }
-	  else
-	    {
-	      vptr->next = vlist_out;
-	      vlist_out = vptr;
+	      FLOATTYPE dist = vec3_distance_to_plane (vptr->vertex,
+						       &faceplane);
+	      vertex_info *next = vptr->next;
+
+	      if (dist > 0.0 && vptr->halfedge == NULL)
+		{
+		  vptr->next = fptr->face_vertices;
+		  fptr->face_vertices = vptr;
+		}
+	      else
+		{
+		  vptr->next = vlist_out;
+		  vlist_out = vptr;
+		}
+
+	      vptr = next;
 	    }
 
-	  vptr = next;
+          frptr->face->face_vertices = vlist_out;
 	}
-
-
-      vlist = vlist_out;
     }
 
   /* Clear vertex halfedge pointers.  */
@@ -516,7 +527,7 @@ visible_faces_1 (faceref_list **flist, int stamp,
 }
 
 faceref_list *
-visible_faces (face_info *face, int *vis_stamp, hfedgeref_list **horizon_edges,
+visible_faces (face_info *face, hfedgeref_list **horizon_edges,
 	       const plane *face_plane, const vertex_info *pt)
 {
   faceref_list *visible = NULL;
@@ -526,16 +537,14 @@ visible_faces (face_info *face, int *vis_stamp, hfedgeref_list **horizon_edges,
   
   visible_faces_1 (&visible, stamp, horizon_edges, face, face_plane, pt);
   
-  *vis_stamp = stamp;
-  
   stamp++;
   
   return visible;
 }
 
 face_info *
-replace_faces (faceref_list *visible, int stamp __attribute__((unused)),
-	       hfedgeref_list **horizon_edges, vertex_info *pt)
+replace_faces (faceref_list *visible, hfedgeref_list **horizon_edges,
+	       vertex_info *pt)
 {
   face_info *flist = NULL /*, *fptr*/;
   hfedgeref_list *hfref_ptr;
@@ -594,9 +603,9 @@ replace_faces (faceref_list *visible, int stamp __attribute__((unused)),
   
   printf ("visible: %p\n", visible);
   
-  while (visible)
+  for (; visible != NULL; visible = visible->next)
     {
-      face_info *face = pop_face (&visible);
+      face_info *face = visible->face;
       /*halfedge_info *first, *heptr;*/
       
       /*first = heptr = face->halfedge;*/
@@ -624,18 +633,111 @@ replace_faces (faceref_list *visible, int stamp __attribute__((unused)),
   return flist;
 }
 
+static face_info *faces;
+static faceref_list *facestack;
+
+void
+convex_hull_step (void)
+{
+  face_info *fptr;
+
+restart:
+  if (facestack != NULL)
+    {
+      face_info *face = pop_face (&facestack);
+      plane faceplane;
+      vertex_info *most_distant = NULL, *vptr;
+      FLOATTYPE distance = 0.0;
+      faceref_list *frlist, *frptr;
+      hfedgeref_list *horizon_edges = NULL;
+      face_info *new_faces = NULL;
+      
+      /* Ignore deleted faces.  */
+      if (face->visited_stamp == -1)
+        goto restart;
+      
+      plane_from_face (&faceplane, face);
+
+      for (vptr = face->face_vertices; vptr != NULL; vptr = vptr->next)
+        {
+	  FLOATTYPE thispt = vec3_distance_to_plane (vptr->vertex, &faceplane);
+
+	  assert (thispt > 0.0);
+
+	  if (thispt > distance)
+	    {
+	      distance = thispt;
+	      most_distant = vptr;
+	    }
+	}
+
+      assert (most_distant && distance > 0.0);
+      
+      frlist = visible_faces (face, &horizon_edges, &faceplane, most_distant);
+      for (frptr = frlist; frptr != NULL; frptr = frptr->next)
+        printf ("visible face: %p\n", frptr->face);
+
+      new_faces = replace_faces (frlist, &horizon_edges, most_distant);
+
+      /*for (prevface = NULL, fptr = faces; fptr != NULL;)
+        {
+	  face_info *next = fptr->next;
+
+	  if (fptr->visited_stamp == -1)
+	    {
+	      printf ("delete face: %p\n", fptr);
+	      free (fptr);
+
+	      if (prevface)
+	        prevface->next = next;
+	      else
+		faces = next;
+	    }
+
+	  prevface = fptr;
+	  fptr = next;
+	}*/
+
+      assign_points (new_faces, frlist);
+
+      /* Attach new faces to polyhedron (append list in-place).  */
+      for (fptr = new_faces; fptr != NULL; fptr = fptr->next)
+        {
+	  /* Push new faces onto stack.  */
+	  if (fptr->face_vertices)
+	    push_face (fptr, &facestack);
+
+	  if (fptr->next == NULL)
+	    {
+	      fptr->next = faces;
+	      break;
+	    }
+	}
+
+      assert (fptr != NULL);
+
+      faces = new_faces;
+    }
+}
+
 void
 idle (void)
 {
   static float time;
+  static int int_time, last_time = 0;
 
   time = glutGet(GLUT_ELAPSED_TIME) / 50.0;
+
+  int_time = time / 50.0;
+
+  //if (int_time != last_time)
+    convex_hull_step ();
+  
+  last_time = int_time;
 
   rot = time;
   glutPostRedisplay();
 }
-
-static face_info *faces;
 
 void
 display (void)
@@ -755,7 +857,6 @@ main (int argc, char **argv)
 {
   int i;
   vertex_info *vlist;
-  faceref_list *facestack = NULL;
   face_info *fptr;
   
   for (i = 0; i < NUMPOINTS; i++)
@@ -766,97 +867,26 @@ main (int argc, char **argv)
 	  points[i][1] = drand48 () * 3.0 - 1.5;
 	  points[i][2] = drand48 () * 3.0 - 1.5;
 	}
-      while (vec3_length (points[i]) > 1.7);
+      while (vec3_length (points[i]) > 1.8);
     }
   
   vlist = vertex_list (points, NUMPOINTS);
   faces = locate_simplex_points (vlist);
-  assign_points (faces, vlist);
+  {
+    face_info tmpface;
+    faceref_list tmpflist;
+    tmpface.face_vertices = vlist;
+    tmpflist.face = &tmpface;
+    tmpflist.next = NULL;
+    assign_points (faces, &tmpflist);
+  }
+  
+  facestack = NULL;
   
   for (fptr = faces; fptr != NULL; fptr = fptr->next)
     if (fptr->face_vertices)
       push_face (fptr, &facestack);
-  
-  while (facestack != NULL)
-    {
-      face_info *face = pop_face (&facestack);
-      plane faceplane;
-      vertex_info *most_distant = NULL, *vptr;
-      FLOATTYPE distance = 0.0;
-      faceref_list *frlist, *frptr;
-      int vis_stamp;
-      hfedgeref_list *horizon_edges = NULL;
-      face_info *new_faces = NULL;
-      
-      /* Ignore deleted faces.  */
-      if (face->visited_stamp == -1)
-        continue;
-      
-      plane_from_face (&faceplane, face);
-
-      for (vptr = face->face_vertices; vptr != NULL; vptr = vptr->next)
-        {
-	  FLOATTYPE thispt = vec3_distance_to_plane (vptr->vertex, &faceplane);
-
-	  assert (thispt > 0.0);
-
-	  if (thispt > distance)
-	    {
-	      distance = thispt;
-	      most_distant = vptr;
-	    }
-	}
-
-      assert (most_distant && distance > 0.0);
-      
-      frlist = visible_faces (face, &vis_stamp, &horizon_edges, &faceplane,
-			      most_distant);
-      for (frptr = frlist; frptr != NULL; frptr = frptr->next)
-        printf ("visible face: %p\n", frptr->face);
-
-      new_faces = replace_faces (frlist, vis_stamp, &horizon_edges,
-				 most_distant);
-
-      /*for (prevface = NULL, fptr = faces; fptr != NULL;)
-        {
-	  face_info *next = fptr->next;
-
-	  if (fptr->visited_stamp == -1)
-	    {
-	      printf ("delete face: %p\n", fptr);
-	      free (fptr);
-
-	      if (prevface)
-	        prevface->next = next;
-	      else
-		faces = next;
-	    }
-
-	  prevface = fptr;
-	  fptr = next;
-	}*/
-
-      assign_points (new_faces, face->face_vertices);
-
-      /* Attach new faces to polyhedron (append list in-place).  */
-      for (fptr = new_faces; fptr != NULL; fptr = fptr->next)
-        {
-	  /* Push new faces onto stack.  */
-	  if (fptr->face_vertices)
-	    push_face (fptr, &facestack);
-
-	  if (fptr->next == NULL)
-	    {
-	      fptr->next = faces;
-	      break;
-	    }
-	}
-
-      assert (fptr != NULL);
-
-      faces = new_faces;
-    }
-  
+    
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
   glutCreateWindow("Convex hull");

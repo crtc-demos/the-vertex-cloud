@@ -326,7 +326,10 @@ void
 vec3_normalize (vec3 dest, const vec3 pt)
 {
   FLOATTYPE x = pt[0], y = pt[1], z = pt[2];
-  FLOATTYPE rlen = 1.0 / sqrt (x * x + y * y + z * z);
+  FLOATTYPE len = sqrt (x * x + y * y + z * z), rlen;
+  
+  assert (len != 0.0);
+  rlen = 1.0 / len;
   
   dest[0] = x * rlen;
   dest[1] = y * rlen;
@@ -711,10 +714,8 @@ plane_from_triangle (plane *theplane, const vec3 a, const vec3 b, const vec3 c)
   vec3_normalize (norm, norm);
   
   memcpy (theplane->normal, norm, sizeof (FLOATTYPE) * 3);
-  
-  vec3_scale (scaled_norm, norm, vec3_dot_vec3 (a, norm));
- 
-  theplane->offset = vec3_length (scaled_norm);
+   
+  theplane->offset = vec3_dot_vec3 (a, norm);
 }
 
 FLOATTYPE
