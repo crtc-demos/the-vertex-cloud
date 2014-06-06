@@ -690,13 +690,13 @@ vec3_distance_to_line (const vec3 pt, const vec3 a, const vec3 b)
   FLOATTYPE dotprod;
   
   vec3_sub_vec3 (line, b, a);
+  vec3_normalize (line, line);
   vec3_sub_vec3 (a_to_pt, pt, a);
   dotprod = vec3_dot_vec3 (line, a_to_pt);
   
   vec3_scale (intercept, line, dotprod);
-  vec3_add_vec3 (intercept, a, intercept);
   
-  return vec3_distance_vec3 (pt, intercept);
+  return vec3_distance_vec3 (a_to_pt, intercept);
 }
 
 void

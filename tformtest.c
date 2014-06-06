@@ -121,11 +121,22 @@ void test4 (void)
   printf ("dist: %f\n", vec3_distance_to_plane (c, &myplane));
 }
 
+void test5 (void)
+{
+  vec3 a = { -1.0,   0, 0 };
+  vec3 b = {  1.0,   0, 0 };
+  vec3 c = {  0,   5.0, 0 };
+  
+  printf ("test 5:\n");
+  printf ("dist to line = %f\n", vec3_distance_to_line (c, a, b));
+}
+
 int main (int argc, char* argv[])
 {
   test1 ();
   test2 ();
   test3 ();
   test4 ();
+  test5 ();
   return 0;
 }
