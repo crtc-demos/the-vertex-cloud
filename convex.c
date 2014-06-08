@@ -202,10 +202,10 @@ vertex_list (GLfloat points[][3], int numpoints)
 	    /|\
 	   / | \
     F4 -> /  |  \ <- F3
-	 /   | F1\ 
-	/    |C   \
+	 /  F 1  \ 
+	/    |    \
        /   _,+._   \
-      /_,-'     '-._\
+      /_,-'  C  '-._\
    A *---------------* B
            ^ F2
 ***/
@@ -542,6 +542,31 @@ visible_faces (face_info *face, hfedgeref_list **horizon_edges,
   return visible;
 }
 
+/* Unlink a halfedge, possibly changing a reference to the same halfedge to
+   point to one of the previous neighbours.  */
+
+void
+unlink_halfedge (halfedge_info *halfedge, halfedge_info **hfref)
+{
+  printf ("unlinking halfedge %p", halfedge);
+  halfedge->prev->next = halfedge->next;
+  halfedge->next->prev = halfedge->prev;
+  if (halfedge == *hfref)
+    {
+      if (halfedge == halfedge->next)
+        {
+	  printf (": no more halfedges");
+	  *hfref = NULL;
+	}
+      else
+        {
+	  printf (": updating link from face to %p", halfedge->next);
+	  *hfref = halfedge->next;
+	}
+    }
+  printf ("\n");
+}
+
 face_info *
 replace_faces (faceref_list *visible, hfedgeref_list **horizon_edges,
 	       vertex_info *pt)
@@ -564,6 +589,8 @@ replace_faces (faceref_list *visible, hfedgeref_list **horizon_edges,
 
       horiz_to_pt = add_halfedge (newface, horizon_edge->opposite->vertex);
       pt_to_horiz = add_halfedge (newface, pt);
+
+      unlink_halfedge (horizon_edge, &horizon_edge->face->halfedge);
 
       horizon_edge->next = horiz_to_pt;
       horizon_edge->prev = pt_to_horiz;
@@ -603,48 +630,45 @@ replace_faces (faceref_list *visible, hfedgeref_list **horizon_edges,
   
   printf ("visible: %p\n", visible);
   
+  /* Free all the halfedges for the face now, but leave the face itself to be
+     freed later because we still have references to it elsewhere (e.g. in the
+     work stack of faces to be processed).  */
   for (; visible != NULL; visible = visible->next)
     {
       face_info *face = visible->face;
-      /*halfedge_info *first, *heptr;*/
+      halfedge_info *halfedge = face->halfedge;
+      halfedge_info *first = halfedge;
       
-      /*first = heptr = face->halfedge;*/
-      
-      /*do
-        {
-	  halfedge_info *next = heptr->next;
+      /* We either have a NULL halfedge or a circular list of them: that's why
+         this construct looks a bit weird.  */
+      if (halfedge)
+	do
+          {
+	    halfedge_info *next = halfedge->next;
+	    assert (halfedge->face == face);
+	    free (halfedge);
+	    halfedge = next;
+	  }
+	while (halfedge != first);
 
-	  if (heptr->opposite->opposite != heptr
-	      || heptr->next->prev != heptr
-	      || heptr->prev->next != heptr)
-	    {
-	      printf ("detached halfedge: %p\n", heptr);
-	      free (heptr);
-	    }
-
-	  heptr = next;
-	}
-      while (heptr != first);*/
-      
-      printf ("detached face: %p\n", face);
-      face->visited_stamp = -1;
+      printf ("mark face deleted: %p\n", face);
+      face->halfedge = NULL;
     }
   
   return flist;
 }
 
-static face_info *faces;
-static faceref_list *facestack;
+void cleanup (face_info **faces);
 
 void
-convex_hull_step (void)
+convex_hull_step (face_info **faces, faceref_list **facestack)
 {
   face_info *fptr;
 
 restart:
-  if (facestack != NULL)
+  if (*facestack != NULL)
     {
-      face_info *face = pop_face (&facestack);
+      face_info *face = pop_face (facestack);
       plane faceplane;
       vertex_info *most_distant = NULL, *vptr;
       FLOATTYPE distance = 0.0;
@@ -653,7 +677,7 @@ restart:
       face_info *new_faces = NULL;
       
       /* Ignore deleted faces.  */
-      if (face->visited_stamp == -1)
+      if (face->halfedge == NULL)
         goto restart;
       
       plane_from_face (&faceplane, face);
@@ -679,61 +703,112 @@ restart:
 
       new_faces = replace_faces (frlist, &horizon_edges, most_distant);
 
-      /*for (prevface = NULL, fptr = faces; fptr != NULL;)
-        {
-	  face_info *next = fptr->next;
-
-	  if (fptr->visited_stamp == -1)
-	    {
-	      printf ("delete face: %p\n", fptr);
-	      free (fptr);
-
-	      if (prevface)
-	        prevface->next = next;
-	      else
-		faces = next;
-	    }
-
-	  prevface = fptr;
-	  fptr = next;
-	}*/
-
       assign_points (new_faces, frlist);
+
+      /* We don't need the list of new face refs any more.  */
+      while (frlist)
+        {
+	  faceref_list *next = frlist->next;
+	  free (frlist);
+	  frlist = next;
+	}
 
       /* Attach new faces to polyhedron (append list in-place).  */
       for (fptr = new_faces; fptr != NULL; fptr = fptr->next)
         {
 	  /* Push new faces onto stack.  */
 	  if (fptr->face_vertices)
-	    push_face (fptr, &facestack);
+	    push_face (fptr, facestack);
 
 	  if (fptr->next == NULL)
 	    {
-	      fptr->next = faces;
+	      fptr->next = *faces;
 	      break;
 	    }
 	}
 
       assert (fptr != NULL);
 
-      faces = new_faces;
+      *faces = new_faces;
     }
+  else
+    cleanup (faces);
 }
+
+void
+cleanup (face_info **faces)
+{
+  face_info *livefaces = NULL, *fptr;
+  
+  /* Mark the live vertices by setting their halfedge pointer to something
+     reasonable.  */
+  for (fptr = *faces; fptr != NULL; fptr = fptr->next)
+    {
+      if (fptr->halfedge != NULL)
+        {
+	  halfedge_info *first, *heptr;
+	  first = heptr = fptr->halfedge;
+	  do
+	    {
+	      heptr->vertex->halfedge = heptr;
+	      heptr = heptr->next;
+	    }
+	  while (heptr != first);
+	}
+    }
+  
+  for (fptr = *faces; fptr != NULL;)
+    {
+      face_info *next = fptr->next;
+      
+      if (fptr->halfedge != NULL)
+        {
+	  fptr->next = livefaces;
+	  livefaces = fptr;
+	}
+      else
+        {
+	  vertex_info *vptr;
+	  
+	  /* Delete any face_vertices we might have left on a deleted face.  */
+	  for (vptr = fptr->face_vertices; vptr != NULL;)
+	    {
+	      vertex_info *next = vptr->next;
+	      if (vptr->halfedge == NULL)
+	        {
+		  printf ("deleting vertex %p\n", vptr);
+		  free (vptr);
+		}
+	      vptr = next;
+	    }
+
+          printf ("deleting face %p\n", fptr);
+	  free (fptr);
+	}
+    
+      fptr = next;
+    }
+  
+  *faces = livefaces;
+}
+
+static face_info *faces;
+static faceref_list *facestack;
 
 void
 idle (void)
 {
   static float time;
-  static int int_time, last_time = 0;
+  /*static int int_time, last_time = 0;*/
 
   time = glutGet(GLUT_ELAPSED_TIME) / 50.0;
 
-  int_time = time / 50.0;
+  /*int_time = time / 50.0;*/
 
   //if (int_time != last_time)
-    convex_hull_step ();
+  convex_hull_step (&faces, &facestack);
   
-  last_time = int_time;
+  /*last_time = int_time;*/
 
   rot = time;
   glutPostRedisplay();
@@ -771,7 +846,7 @@ display (void)
       vec3 pts[3];
       int i;
       
-      if (fptr->visited_stamp == -1)
+      if (fptr->halfedge == NULL)
         continue;
       
       hptr = first;
@@ -804,7 +879,7 @@ display (void)
     {
       vertex_info *vptr;
 
-      if (fptr->visited_stamp == -1)
+      if (fptr->halfedge == NULL)
         continue;
 
       glColor3fv (colours[faceidx & 7]);
