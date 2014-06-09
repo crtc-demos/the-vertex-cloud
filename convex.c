@@ -792,6 +792,99 @@ cleanup (face_info **faces)
   *faces = livefaces;
 }
 
+/* Our vertices started out in a list, but by the time the convex hull has been
+   computed aren't in any sensible order.  Go through each of the vertices
+   relinking them into a single list.  */
+
+vertex_info *
+get_vertex_list (face_info *faces)
+{
+  vertex_info *vlist = NULL, *vnext;
+  face_info *fptr;
+  
+  /* First zero all the vertices' next pointers.  This makes each vertex a
+     singleton list.  */
+  
+  for (fptr = faces; fptr != NULL; fptr = fptr->next)
+    {
+      halfedge_info *hptr = fptr->halfedge;
+      halfedge_info *first = hptr;
+      
+      do
+        {
+	  hptr->vertex->next = NULL;
+	  hptr = hptr->next;
+	}
+      while (hptr != first);
+    }
+  
+  /* Now go through the vertices again.  If a vertex has a next pointer, it is
+     in the list already.  If it doesn't, then add it to VLIST (a circular
+     list).  */
+
+  for (fptr = faces; fptr != NULL; fptr = fptr->next)
+    {
+      halfedge_info *hptr = fptr->halfedge;
+      halfedge_info *first = hptr;
+      
+      do
+        {
+	  vertex_info *vtx = hptr->vertex;
+	  
+	  if (vlist == NULL)
+	    vlist = vtx->next = vtx;
+	  else if (vtx->next == NULL)
+	    {
+	      vtx->next = vlist->next;
+	      vlist->next = vtx;
+	    }
+	}
+      while (hptr != first);
+    }
+  
+  /* Now untie the circular list to make it linear.  */
+  
+  vnext = vlist->next;
+  vlist->next = NULL;
+  vlist = vnext;
+  
+  return vlist;
+}
+
+void
+delete_convex_hull (face_info **faces)
+{
+  vertex_info *vlist = get_vertex_list (*faces);
+  face_info *fptr;
+  
+  while (vlist)
+    {
+      vertex_info *next = vlist->next;
+      free (vlist);
+      vlist = next;
+    }
+  
+  for (fptr = *faces; fptr != NULL;)
+    {
+      face_info *next = fptr->next;
+      halfedge_info *hptr = fptr->halfedge;
+      halfedge_info *first = hptr;
+      
+      do
+        {
+	  free (hptr);
+	  hptr = hptr->next;
+	}
+      while (hptr != first);
+
+      free (fptr);
+
+      fptr = next;
+    }
+
+  *faces = NULL;
+}
+
 static face_info *faces;
 static faceref_list *facestack;
 
@@ -896,6 +989,17 @@ display (void)
 }
 
 void
+mouse (int button, int state __attribute__((unused)),
+       int x __attribute__((unused)), int y __attribute__((unused)))
+{
+  if (button == GLUT_LEFT_BUTTON)
+    {
+      delete_convex_hull (&faces);
+      exit (0);
+    }
+}
+
+void
 gfxinit (void)
 {
 #ifndef DREAMCAST_KOS
@@ -962,11 +1066,12 @@ main (int argc, char **argv)
     if (fptr->face_vertices)
       push_face (fptr, &facestack);
     
-  glutInit(&argc, argv);
-  glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
-  glutCreateWindow("Convex hull");
-  glutDisplayFunc(display);
-  glutIdleFunc(idle);
+  glutInit (&argc, argv);
+  glutInitDisplayMode (GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
+  glutCreateWindow ("Convex hull");
+  glutDisplayFunc (display);
+  glutIdleFunc (idle);
+  glutMouseFunc (mouse);
   gfxinit();
   glutMainLoop();
 
