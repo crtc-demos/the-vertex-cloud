@@ -2,7 +2,6 @@
 	CC = 		gcc
 	STRIP =		strip
 	CFLAGS =	-O0 -fomit-frame-pointer -W -Wall -g
-	DEPFLAGS =
 	LIBS =		-lGL -lGLU -lglut -lm
 	LDFLAGS =	-g
 
@@ -12,12 +11,15 @@
 
 	SRC =	transform-gl.c convex.c perlin.c
 
-.PHONY:	.depend
+.PHONY:	clean
 
 all:	$(TARGET)
 
 clean:
 	rm -f $(OBJS) $(TARGET)
+
+cleaner: clean
+	rm -f *.d
 
 $(TARGET):	$(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
@@ -25,7 +27,11 @@ $(TARGET):	$(OBJS)
 %.o:	%.c
 	$(CC) $(CFLAGS) $(INCLUDE) -c $< -o $@
 
-.depend:	Makefile $(SRC)
-	$(CC) $(DEPFLAGS) $(INCLUDE) -MM $(SRC) > .depend
+%.d:    %.c
+	$(CC) $(CFLAGS) $(INCLUDE) -MM $< > $@
 
-include .depend
+ifneq ($(MAKECMDGOALS),clean)
+ifneq ($(MAKECMDGOALS),cleaner)
+include $(OBJS:.o=.d)
+endif
+endif

@@ -706,7 +706,7 @@ void
 plane_from_triangle (plane *theplane, const vec3 a, const vec3 b, const vec3 c)
 {
   vec3 ab, ac;
-  vec3 norm, scaled_norm;
+  vec3 norm;
   
   vec3_sub_vec3 (ab, b, a);
   vec3_sub_vec3 (ac, c, a);
