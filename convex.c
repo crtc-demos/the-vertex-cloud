@@ -2,34 +2,45 @@
 #include <string.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <GL/glut.h>
+/*#include <GL/glut.h>*/
+
+#include <kos.h>
+#include <pthread.h>
+#include <kmg/kmg.h>
+
+#include <GL/gl.h>
+#include <GL/glu.h>
 
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 
-#define FLOATTYPE GLfloat
+#define FLOATTYPE float
 #include "transform.h"
 
-GLfloat light_diffuse[] = {0.9, 0.7, 0.2, 1.0};
-GLfloat light_position[] = {1.0, 1.0, 1.0, 0.0};
+#include "convex.h"
 
-GLfloat light2_diffuse[] = {0.0, 0.1, 0.4, 1.0};
-GLfloat light2_position[] = {-1.0, -1.0, -0.5, 0.0};
+FLOATTYPE light_diffuse[] = {0.9, 0.7, 0.2, 1.0};
+FLOATTYPE light_position[] = {1.0, 1.0, 1.0, 0.0};
 
-GLfloat mat_specular[] = {0.3f, 0.4f, 0.5f, 1.0f};
-GLfloat mat_shininess[] = {20.0f};
+FLOATTYPE light2_diffuse[] = {0.0, 0.1, 0.4, 1.0};
+FLOATTYPE light2_position[] = {-1.0, -1.0, -0.5, 0.0};
 
-GLfloat rot;
+FLOATTYPE mat_specular[] = {0.3f, 0.4f, 0.5f, 1.0f};
+FLOATTYPE mat_shininess[] = {20.0f};
 
-#define NUMPOINTS 3000
+FLOATTYPE rot;
+
+#define NUMPOINTS 500
 #if 0
 #define debug_printf(...) printf (__VA_ARGS__)
 #else
 #define debug_printf(...) do { } while (0)
 #endif
 
-GLfloat points[NUMPOINTS][3];
+FLOATTYPE points[NUMPOINTS][3];
+FLOATTYPE velocity[NUMPOINTS][3];
+FLOATTYPE accn[NUMPOINTS][3];
 
 struct halfedge_info;
 
@@ -75,7 +86,7 @@ add_vertex (vec3 vec, halfedge_info *halfedge, vertex_info *prev)
 {
   vertex_info *newvtx = malloc (sizeof (vertex_info));
   
-  memcpy (newvtx->vertex, vec, sizeof (GLfloat) * 3);
+  memcpy (newvtx->vertex, vec, sizeof (FLOATTYPE) * 3);
 
   newvtx->halfedge = halfedge;
   
@@ -189,7 +200,7 @@ edge_loop (halfedge_info **hearr, int count, face_info *face)
 }
 
 vertex_info *
-vertex_list (GLfloat points[][3], int numpoints)
+vertex_list (FLOATTYPE points[][3], int numpoints)
 {
   int i;
   vertex_info *vlist = NULL;
@@ -296,7 +307,7 @@ initial_simplex (vertex_info *va, vertex_info *vb, vertex_info *vc,
 face_info *
 locate_simplex_points (vertex_info *vlist)
 {
-  GLfloat lo[3], hi[3];
+  FLOATTYPE lo[3], hi[3];
   vertex_info *loptr[3], *hiptr[3];
   vertex_info *vptr;
   int i, extremities;
@@ -554,7 +565,7 @@ plane_from_face (plane *outplane, const face_info *face)
   halfedge_info *hptr;
   
   for (i = 0, hptr = face->halfedge; i < 3; i++, hptr = hptr->prev)
-    memcpy (pts[i], hptr->vertex->vertex, sizeof (GLfloat) * 3);
+    memcpy (pts[i], hptr->vertex->vertex, sizeof (FLOATTYPE) * 3);
   
   plane_from_triangle (outplane, pts[0], pts[1], pts[2]);
 }
@@ -968,8 +979,10 @@ delete_convex_hull (face_info **faces)
   *faces = NULL;
 }
 
-static face_info *faces = NULL;
+static face_info *faces[2] = { NULL, NULL };
 static faceref_list *facestack;
+static volatile int drawing_face = 0;
+static volatile int ask_quit = 0;
 
 void
 setup_points ()
@@ -983,11 +996,33 @@ setup_points ()
 	  points[i][0] = drand48 () * 3.0 - 1.5;
 	  points[i][1] = drand48 () * 3.0 - 1.5;
 	  points[i][2] = drand48 () * 3.0 - 1.5;
+	  velocity[i][0] = drand48 () * 3.0 - 1.5;
+	  velocity[i][1] = drand48 () * 3.0 - 1.5;
+	  velocity[i][2] = drand48 () * 3.0 - 1.5;
+	  accn[i][0] = accn[i][1] = accn[i][2] = 0.0;
 	}
       while (vec3_length (points[i]) > 1.8);
     }
 }
 
+void
+move_points ()
+{
+  int i;
+  const float t = 0.01;
+  
+  for (i = 0; i < NUMPOINTS; i++)
+    {
+      points[i][0] += velocity[i][0] * t;
+      points[i][1] += velocity[i][1] * t;
+      points[i][2] += velocity[i][2] * t;
+      velocity[i][0] += -points[i][0] * t;
+      velocity[i][1] += -points[i][1] * t;
+      velocity[i][2] += -points[i][2] * t;
+    }
+}
+
+#if 0
 void
 idle (void)
 {
@@ -1019,7 +1054,7 @@ void
 display (void)
 {
   face_info *fptr;
-  GLfloat colours[][3] =
+  FLOATTYPE colours[][3] =
     { { 1.0, 1.0, 0.5 },
       { 1.0, 0.5, 1.0 },
       { 1.0, 0.5, 0.5 },
@@ -1053,7 +1088,7 @@ display (void)
       hptr = first;
       for (i = 0; i < 3; i++)
         {
-          memcpy (pts[i], hptr->vertex->vertex, sizeof (GLfloat) * 3);
+          memcpy (pts[i], hptr->vertex->vertex, sizeof (FLOATTYPE) * 3);
 	  hptr = hptr->prev;
 	}
       vec3_sub_vec3 (pts[2], pts[2], pts[0]);
@@ -1137,21 +1172,266 @@ gfxinit (void)
     0.0, 1.0, 0.);      /* up is in positive Y direction */
   glTranslatef(0.0, 0.0, -3.0);
 }
+#endif
 
-/* glut main function */
-int
-main (int argc, char **argv)
+static float rotational = 0.0;
+static kos_img_t envmap_txr;
+static pvr_ptr_t envmap_texaddr;
+static GLuint envmap_binding;
+
+static void
+draw_convex_hull (face_info *fptr, int draw_type)
+{
+  vec3 eyepos = { 0.0, 0.0, -10.0 };
+  vec3 v_eyedir = { 0.0, 0.0, -1.0 };
+  GLfloat mview[16], rotpart[16];
+  
+  glPushMatrix ();
+  glRotatef (rotational, 0.0, 1.0, 0.0);
+  glRotatef (rotational / 3.5, 0.0, 0.0, 1.0);
+  glGetFloatv (GL_MODELVIEW_MATRIX, mview);
+  
+  mat44_extract_rotation (rotpart, mview);
+
+  glMatrixMode (GL_MODELVIEW);
+  glLoadIdentity ();
+  
+  rotational += 1;
+  
+  if (draw_type == 0)
+    glDisable (GL_TEXTURE_2D);
+  else if (draw_type == 1)
+    {
+      glEnable (GL_TEXTURE_2D);
+      glBindTexture (GL_TEXTURE_2D, envmap_binding);
+      glKosTex2D (/*PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_TWIDDLED | PVR_TXRFMT_ARGB4444*/ PVR_TXRFMT_RGB565 | PVR_TXRFMT_TWIDDLED,
+		  1024, 1024, envmap_texaddr);
+    }
+  
+  glBegin (GL_TRIANGLES);
+  for (; fptr != NULL; fptr = fptr->next)
+    {
+      halfedge_info *first = fptr->halfedge, *hptr;
+      vec3 pts[3];
+      vec3 pt_rot, norm_rot;
+      int i;
+      
+      if (fptr->halfedge == NULL)
+        continue;
+
+      hptr = first;
+      for (i = 0; i < 3; i++)
+        {
+	  memcpy (pts[i], hptr->vertex->vertex, sizeof (FLOATTYPE) * 3);
+	  hptr = hptr->prev;
+	}
+      vec3_sub_vec3 (pts[2], pts[2], pts[0]);
+      vec3_sub_vec3 (pts[1], pts[1], pts[0]);
+      vec3_cross_vec3 (pts[0], pts[1], pts[2]);
+      vec3_normalize (pts[0], pts[0]);
+      //glNormal3fv (pts[0]);
+      if (draw_type == 0)
+	glColor3f (0.5+0.5*pts[0][0], 0.5+0.5*pts[0][1], 0.5+0.5*pts[0][2]);
+      else
+	glColor3f (1.0, 1.0, 1.0);
+
+      transp_mat44_mul_vec3 (norm_rot, rotpart, pts[0]);
+      //printf ("length of norm_rot:%f\n", vec3_length (norm_rot));
+
+      hptr = first;
+      do
+        {
+	  vec3 incident, reflect, tmp;
+	  float norm_dot_incident;
+	  
+	  transp_mat44_mul_vec3 (pt_rot, mview, hptr->vertex->vertex);
+	  
+	  if (draw_type == 1)
+	    {
+	      vec3_sub_vec3 (incident, pt_rot, eyepos);
+	      vec3_normalize (incident, incident);
+	      norm_dot_incident = vec3_dot_vec3 (norm_rot, incident);
+	      vec3_scale (tmp, norm_rot, 2 * norm_dot_incident);
+	      vec3_add_vec3 (reflect, incident, tmp);
+
+	      vec3_add_vec3 (reflect, reflect, v_eyedir);
+	      vec3_normalize (reflect, reflect);
+
+	      glTexCoord2f (0.5+0.5*reflect[0], 0.5-0.5*reflect[1]);
+	    }
+	  glVertex3fv (pt_rot);
+          hptr = hptr->prev;
+	}
+      while (hptr != first);
+    }
+  glEnd ();
+  
+  glPopMatrix ();
+}
+
+static pthread_mutex_t recalc_face_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t ask_quit_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void *
+recalculate_convex_hull_thread (void *args UNUSED)
+{
+  int quit = 0;
+  
+  while (!quit)
+    {
+      int recalc_face = 1 - drawing_face;
+
+      move_points ();
+
+      if (faces[recalc_face])
+        {
+	  delete_convex_hull (&faces[recalc_face]);
+	  pthread_mutex_lock (&ask_quit_mutex);
+	  if (ask_quit)
+	    quit = 1;
+	  pthread_mutex_unlock (&ask_quit_mutex);
+	  continue;
+	}
+
+      init_convex_hull (&faces[recalc_face], &facestack,
+			vertex_list (points, NUMPOINTS));
+      convex_hull_step (&faces[recalc_face], &facestack, true);
+      
+      pthread_mutex_lock (&recalc_face_mutex);
+      drawing_face = recalc_face;
+      pthread_mutex_unlock (&recalc_face_mutex);
+    }
+
+  return NULL;
+}
+
+static void
+preinit_convex_hull_assets (void)
 {
   setup_points ();
+  kmg_to_img ("/rd/spheremap.kmg", &envmap_txr);
+}
 
-  glutInit (&argc, argv);
-  glutInitDisplayMode (GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
-  glutCreateWindow ("Convex hull");
-  glutDisplayFunc (display);
-  glutIdleFunc (idle);
-  glutMouseFunc (mouse);
-  gfxinit();
-  glutMainLoop();
+static void
+finalize_convex_hull (void *params UNUSED)
+{
+  kos_img_free (&envmap_txr, 0);
+}
+
+void
+init_convex_hull_effect (void *params)
+{
+  convex_hull_data *cdata = params;
+  int rc;
+
+  envmap_texaddr = pvr_mem_malloc (envmap_txr.byte_count);
+  pvr_txr_load_kimg (&envmap_txr, envmap_texaddr, KOS_IMG_FMT_RGB565);
+  
+  //glKosInit ();
+
+  glGenTextures (1, &envmap_binding);
+  
+  vid_border_color (0, 0, 0);
+  pvr_set_bg_color (0.0, 0.0, 0.0);
+  
+  glEnable (GL_DEPTH_TEST);
+  glEnable (GL_CULL_FACE);
+  glEnable (GL_TEXTURE_2D);
+  glShadeModel (GL_FLAT);
+  glClearDepth (1.0f);
+  glDepthFunc (GL_LEQUAL);
+
+  glMatrixMode (GL_PROJECTION);
+  glLoadIdentity ();
+  gluPerspective (30.0,			/* Field of view in degrees.  */
+		  640.0 / 480.0,	/* Aspect ratio.  */
+		  1.0,			/* Z near.  */
+		  50.0);		/* Z far.  */
+
+  glMatrixMode (GL_MODELVIEW);
+  glLoadIdentity ();
+  gluLookAt (0.0, 0.0, -10.0,		/* Eye position.  */
+	     0.0, 0.0,   0.0,		/* Centre.  */
+	     0.0, 1.0,   0.0);		/* Up.  */
+
+  rc = pthread_create (&cdata->conv_hull_thread, NULL,
+		       recalculate_convex_hull_thread, NULL);
+  if (rc != 0)
+    printf ("Couldn't create thread!\n");
+}
+
+void
+display_convex_hull_effect (uint32_t time_offset UNUSED, void *params UNUSED,
+			    int iparam)
+{
+  pthread_mutex_lock (&recalc_face_mutex);
+  if (faces[drawing_face])
+    draw_convex_hull (faces[drawing_face], iparam);
+  pthread_mutex_unlock (&recalc_face_mutex);
+
+  glKosFinishList ();
+}
+
+void
+uninit_convex_hull_effect (void *params)
+{
+  convex_hull_data *cdata = params;
+  int rc;
+  void *status;
+
+  pthread_mutex_lock (&ask_quit_mutex);
+  ask_quit = 1;
+  pthread_mutex_unlock (&ask_quit_mutex);
+  
+  rc = pthread_join (cdata->conv_hull_thread, &status);
+  printf ("Joined with convex hull thread (%d)\n", rc);
+}
+
+convex_hull_data convex_hull_0;
+
+effect_methods convex_hull_methods =
+{
+  preinit_convex_hull_assets,
+  init_convex_hull_effect,
+  NULL,
+  NULL,
+  display_convex_hull_effect,
+  uninit_convex_hull_effect,
+  finalize_convex_hull
+};
+
+#if 0
+int
+main (int argc __attribute__((unused)), char **argv __attribute__((unused)))
+{
+  int cable_type, quit = 0, rc;
+  pthread_t conv_hull_thread;
+  void *status;
+
+  cable_type = vid_check_cable ();
+  
+  if (cable_type == CT_VGA)
+    vid_init (DM_640x480_VGA, PM_RGB565);
+  else
+    vid_init (DM_640x480_PAL_IL, PM_RGB565);
+
+  init_pvr ();
+  
+  while (!quit)
+    {
+      MAPLE_FOREACH_BEGIN (MAPLE_FUNC_CONTROLLER, cont_state_t, st)
+        if (st->buttons & CONT_START)
+	  quit = 1;
+      MAPLE_FOREACH_END ()
+    }
+  
+  
+  glKosShutdown ();
+  
+  pvr_shutdown ();
+  
+  vid_shutdown ();
 
   return 0;
 }
+#endif

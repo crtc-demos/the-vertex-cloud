@@ -1,15 +1,17 @@
 
-	CC = 		gcc
+	CC = 		kos-cc
 	STRIP =		strip
-	CFLAGS =	-O0 -fomit-frame-pointer -W -Wall -g
-	LIBS =		-lGL -lGLU -lglut -lm
-	LDFLAGS =	-g
+	CFLAGS =	-O2 -W -Wall
+	LIBS =		-lm -lgl -lkmg -lkosutils
+	LDFLAGS =	
+	GENROMFS =      $(KOS_GENROMFS)
 
-	OBJS =	transform-gl.o convex.o perlin.o
+	OBJS =	transform-dc.o convex.o perlin.o timing.o romdisk.o
 
-	TARGET = convex
+	TARGET = dcdemo.elf
 
-	SRC =	transform-gl.c convex.c perlin.c
+	SRC =	transform-dc.c convex.c perlin.c timing.c
+	ROMDISK = romdisk.img
 
 .PHONY:	clean
 
@@ -23,6 +25,21 @@ cleaner: clean
 
 $(TARGET):	$(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
+
+.PHONY: $(ROMDISK)
+$(ROMDISK): imagedir_clean
+	$(GENROMFS) -f $@ -d imagedir_clean
+
+.PHONY: imagedir_clean
+imagedir_clean:
+	rm -rf imagedir_clean
+	rsync -Pav --exclude='.svn' imagedir/ imagedir_clean
+
+romdisk.o:      $(ROMDISK)
+	$(KOS_BASE)/utils/bin2o/bin2o romdisk.img romdisk romdisk.o
+
+romdisk.d:
+	touch $@
 
 %.o:	%.c
 	$(CC) $(CFLAGS) $(INCLUDE) -c $< -o $@
