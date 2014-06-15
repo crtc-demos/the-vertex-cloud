@@ -328,7 +328,7 @@ vec3_normalize (vec3 dest, const vec3 pt)
   FLOATTYPE x = pt[0], y = pt[1], z = pt[2];
   FLOATTYPE len = sqrt (x * x + y * y + z * z), rlen;
   
-  assert (len != 0.0);
+  //assert (len != 0.0);
   rlen = 1.0 / len;
   
   dest[0] = x * rlen;

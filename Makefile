@@ -2,15 +2,15 @@
 	CC = 		kos-cc
 	STRIP =		strip
 	CFLAGS =	-O2 -W -Wall
-	LIBS =		-lm -lgl -lkmg -lkosutils
+	LIBS =		 -lgl -lkmg -lkosutils -lpng -lz -lm
 	LDFLAGS =	
 	GENROMFS =      $(KOS_GENROMFS)
 
-	OBJS =	transform-dc.o convex.o perlin.o timing.o romdisk.o
+	OBJS =	transform-dc.o convex.o perlin.o banner.o timing.o romdisk.o
 
 	TARGET = dcdemo.elf
 
-	SRC =	transform-dc.c convex.c perlin.c timing.c
+	SRC =	transform-dc.c convex.c perlin.c banner.c timing.c
 	ROMDISK = romdisk.img
 
 .PHONY:	clean

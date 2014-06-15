@@ -18,6 +18,7 @@
 #include <kmg/kmg.h>
 
 #include "convex.h"
+#include "banner.h"
 
 #define PLAY_AUDIO
 #undef HOLD
@@ -39,8 +40,12 @@ KOS_INIT_ROMDISK (romdisk);
 
 static do_thing_at sequence[] = {
 #if 1
-  {     0, 10000, &convex_hull_methods, &convex_hull_0, 0, 0 },
-  { 10000, 20000, &convex_hull_methods, &convex_hull_0, 1, 1 },
+  //{      0,  20000, &convex_hull_methods, &convex_hull_0, 2, 0 },
+  {      0,  10000, &banner_methods, &banner_0, 0, 0 },
+  {  10000,  70000, &convex_hull_methods, &convex_hull_0, 0, 0 },
+  {  70000,  80000, &banner_methods, &banner_1, 0, 0 },
+  {  80000, 135000, &convex_hull_methods, &convex_hull_0, 1, 1 },
+  { 135000, 140000, &banner_methods, &banner_2, 0, 0 },
 #else
 
   { 0, 300000, &wave_methods, NULL, 0, 0 },
@@ -72,9 +77,9 @@ init_pvr (void)
   pvr_init_params_t params = {
     { PVR_BINSIZE_32,	/* Opaque polygons.  */
       PVR_BINSIZE_0,	/* Opaque modifiers.  */
-      PVR_BINSIZE_0,	/* Translucent polygons.  */
+      PVR_BINSIZE_8,	/* Translucent polygons.  */
       PVR_BINSIZE_0,	/* Translucent modifiers.  */
-      PVR_BINSIZE_0 },	/* Punch-thrus.  */
+      PVR_BINSIZE_8 },	/* Punch-thrus.  */
     512 * 1024,		/* Vertex buffer size 512K.  */
     0,			/* No DMA.  */
     0			/* No FSAA.  */
@@ -94,7 +99,7 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
   do_thing_at *active_effects[MAX_ACTIVE];
   unsigned int num_active_effects;
   const unsigned int num_effects = ARRAY_SIZE (sequence);
-  uint64_t before_sending, after_sending;
+  //uint64_t before_sending, after_sending;
 
   cable_type = vid_check_cable ();
   if (cable_type == CT_VGA)
@@ -265,7 +270,7 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
       printf ("begin frame\n");
 #endif
 
-      if (active_effects[0]->methods->gl_effect)
+      if (num_active_effects == 1 && active_effects[0]->methods->gl_effect)
         {
 	  glKosBeginFrame ();
 	  
@@ -281,7 +286,7 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
       
 	  pvr_scene_begin ();
 
-	  before_sending = timer_ms_gettime64 ();
+	  //before_sending = timer_ms_gettime64 ();
 	  pvr_list_begin (PVR_LIST_OP_POLY);
 	  glKosMatrixDirty ();
 
@@ -323,7 +328,7 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 
 	  pvr_list_finish ();
 
-	  after_sending = timer_ms_gettime64 ();
+	  //after_sending = timer_ms_gettime64 ();
 
 	  pvr_scene_finish ();
 	}
@@ -338,6 +343,13 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
       printf ("finished frame\n");
 #endif
     }
+
+  for (i = 0; i < num_active_effects; i++)
+    if (active_effects[i]->methods->uninit_effect)
+      {
+	active_effects[i]->methods->uninit_effect (
+	  active_effects[i]->params);
+      }
 
   glKosShutdown ();
   pvr_shutdown ();

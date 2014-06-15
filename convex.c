@@ -20,17 +20,6 @@
 
 #include "convex.h"
 
-FLOATTYPE light_diffuse[] = {0.9, 0.7, 0.2, 1.0};
-FLOATTYPE light_position[] = {1.0, 1.0, 1.0, 0.0};
-
-FLOATTYPE light2_diffuse[] = {0.0, 0.1, 0.4, 1.0};
-FLOATTYPE light2_position[] = {-1.0, -1.0, -0.5, 0.0};
-
-FLOATTYPE mat_specular[] = {0.3f, 0.4f, 0.5f, 1.0f};
-FLOATTYPE mat_shininess[] = {20.0f};
-
-FLOATTYPE rot;
-
 #define NUMPOINTS 500
 #if 0
 #define debug_printf(...) printf (__VA_ARGS__)
@@ -38,9 +27,9 @@ FLOATTYPE rot;
 #define debug_printf(...) do { } while (0)
 #endif
 
-FLOATTYPE points[NUMPOINTS][3];
-FLOATTYPE velocity[NUMPOINTS][3];
-FLOATTYPE accn[NUMPOINTS][3];
+static FLOATTYPE points[NUMPOINTS][3];
+static FLOATTYPE velocity[NUMPOINTS][3];
+static FLOATTYPE accn[NUMPOINTS][3];
 
 struct halfedge_info;
 
@@ -1005,13 +994,16 @@ setup_points ()
     }
 }
 
-void
-move_points ()
+static pthread_mutex_t move_points_mutex = PTHREAD_MUTEX_INITIALIZER;
+static volatile unsigned int points_mode = 0;
+
+static unsigned int
+move_points (unsigned int numpoints)
 {
   int i;
   const float t = 0.01;
   
-  for (i = 0; i < NUMPOINTS; i++)
+  for (i = 0; i < numpoints; i++)
     {
       points[i][0] += velocity[i][0] * t;
       points[i][1] += velocity[i][1] * t;
@@ -1020,159 +1012,41 @@ move_points ()
       velocity[i][1] += -points[i][1] * t;
       velocity[i][2] += -points[i][2] * t;
     }
+  
+  return numpoints;
 }
 
-#if 0
-void
-idle (void)
+static unsigned int
+move_points_twist (void)
 {
-  static float time;
-  /*static int int_time, last_time = 0;*/
-
-  time = glutGet (GLUT_ELAPSED_TIME) / 50.0;
-
-  /*int_time = time / 50.0;*/
-
-  //if (int_time != last_time)
-  if (faces)
+  int i, j;
+  unsigned int count = 0;
+  static float offs = 0.3;
+  
+  for (j = -3; j <= 3; j++)
     {
-      delete_convex_hull (&faces);
-      //exit (0);
-    }
+      float y = sin (j * M_PI / 3.2);
+      float amt = 2.0 * cos (j * M_PI / 3.2);
+      float flop = (j & 1) ? -1.0 : 1.0;
 
-  setup_points ();
-  init_convex_hull (&faces, &facestack, vertex_list (points, NUMPOINTS));
-  convex_hull_step (&faces, &facestack, true);
-  
-  /*last_time = int_time;*/
+      if (j == 0)
+        amt = -amt;
 
-  rot = time;
-  glutPostRedisplay();
-}
-
-void
-display (void)
-{
-  face_info *fptr;
-  FLOATTYPE colours[][3] =
-    { { 1.0, 1.0, 0.5 },
-      { 1.0, 0.5, 1.0 },
-      { 1.0, 0.5, 0.5 },
-      { 0.5, 1.0, 1.0 },
-      { 0.5, 1.0, 0.5 },
-      { 0.5, 0.5, 1.0 },
-      { 0.5, 0.5, 0.5 } };
-  int faceidx = 0;
-  
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  
-  glPushMatrix ();
-  
-  glRotatef (rot * 5, 0.0, 1.0, 0.0);
-  glRotatef (rot * 4.85, 1.0, 0.0, 0.0);
-  
-  glEnable (GL_LIGHTING);
-  
-  glColor3f (1.0, 1.0, 1.0);
-  
-  glBegin (GL_TRIANGLES);
-  for (fptr = faces; fptr != NULL; fptr = fptr->next)
-    {
-      halfedge_info *first = fptr->halfedge, *hptr;
-      vec3 pts[3];
-      int i;
-      
-      if (fptr->halfedge == NULL)
-        continue;
-      
-      hptr = first;
-      for (i = 0; i < 3; i++)
-        {
-          memcpy (pts[i], hptr->vertex->vertex, sizeof (FLOATTYPE) * 3);
-	  hptr = hptr->prev;
+      for (i = 0; i < 7; i++)
+	{
+	  float x = amt * cos (flop * (offs + (float) i * 2.0 * M_PI / 7.0));
+	  float z = amt * sin (flop * (offs + (float) i * 2.0 * M_PI / 7.0));
+	  points[count][0] = x;// + drand48() / 100.0;
+	  points[count][1] = y;// + drand48() / 100.0;
+	  points[count][2] = z;// + drand48() / 100.0;
+	  count++;
 	}
-      vec3_sub_vec3 (pts[2], pts[2], pts[0]);
-      vec3_sub_vec3 (pts[1], pts[1], pts[0]);
-      vec3_cross_vec3 (pts[0], pts[1], pts[2]);
-      vec3_normalize (pts[0], pts[0]);
-      glNormal3fv (pts[0]);
-
-      hptr = first;
-      do
-        {
-	  glVertex3fv (hptr->vertex->vertex);
-          hptr = hptr->prev;
-	}
-      while (hptr != first);
     }
-  glEnd ();
   
-  glDisable (GL_LIGHTING);
+  offs += 0.01;
   
-  glBegin (GL_POINTS);
-  glPointSize (4.0f);
-  for (faceidx = 0, fptr = faces; fptr != NULL; fptr = fptr->next, faceidx++)
-    {
-      vertex_info *vptr;
-
-      if (fptr->halfedge == NULL)
-        continue;
-
-      glColor3fv (colours[faceidx & 7]);
-      
-      for (vptr = fptr->face_vertices; vptr != NULL; vptr = vptr->next)
-	glVertex3fv (vptr->vertex);
-    }
-  glEnd ();
-  
-  glPopMatrix ();
-  
-/*  base();*/
-  glutSwapBuffers();
+  return count;
 }
-
-void
-mouse (int button, int state __attribute__((unused)),
-       int x __attribute__((unused)), int y __attribute__((unused)))
-{
-  if (button == GLUT_LEFT_BUTTON)
-    {
-      delete_convex_hull (&faces);
-      exit (0);
-    }
-}
-
-void
-gfxinit (void)
-{
-#ifndef DREAMCAST_KOS
-  glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
-  glLightfv(GL_LIGHT0, GL_POSITION, light_position);
-  glLightfv(GL_LIGHT1, GL_DIFFUSE, light2_diffuse);
-  glLightfv(GL_LIGHT1, GL_POSITION, light2_position);
-  glEnable(GL_LIGHTING);
-  glEnable(GL_LIGHT0);
-  glEnable(GL_LIGHT1);
-  glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, mat_specular);
-  glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, mat_shininess);
-#endif
-  glEnable(GL_DEPTH_TEST);
-#ifndef DREAMCAST_KOS
-  glEnable(GL_COLOR_MATERIAL);
-#endif
-  glEnable(GL_CULL_FACE);
-  glEnable(GL_PROGRAM_POINT_SIZE);
-  glMatrixMode(GL_PROJECTION);
-  gluPerspective( /* field of view in degree */ 40.0,
-  /* aspect ratio */ 1.0,
-    /* Z near */ 1.0, /* Z far */ 10.0);
-  glMatrixMode(GL_MODELVIEW);
-  gluLookAt(0.0, 0.0, 5.0,  /* eye is at (0,0,5) */
-    0.0, 0.0, 0.0,      /* center is at (0,0,0) */
-    0.0, 1.0, 0.);      /* up is in positive Y direction */
-  glTranslatef(0.0, 0.0, -3.0);
-}
-#endif
 
 static float rotational = 0.0;
 static kos_img_t envmap_txr;
@@ -1276,12 +1150,26 @@ static void *
 recalculate_convex_hull_thread (void *args UNUSED)
 {
   int quit = 0;
+  int num_points;
+  int points_mode_now;
   
   while (!quit)
     {
       int recalc_face = 1 - drawing_face;
 
-      move_points ();
+      pthread_mutex_lock (&move_points_mutex);
+      points_mode_now = points_mode;
+      pthread_mutex_unlock (&move_points_mutex);
+      
+      switch (points_mode_now)
+        {
+	case 0:
+	  num_points = move_points (NUMPOINTS);
+	  break;
+	case 1:
+	  num_points = move_points_twist ();
+	  break;
+	}
 
       if (faces[recalc_face])
         {
@@ -1294,7 +1182,7 @@ recalculate_convex_hull_thread (void *args UNUSED)
 	}
 
       init_convex_hull (&faces[recalc_face], &facestack,
-			vertex_list (points, NUMPOINTS));
+			vertex_list (points, num_points));
       convex_hull_step (&faces[recalc_face], &facestack, true);
       
       pthread_mutex_lock (&recalc_face_mutex);
@@ -1308,24 +1196,31 @@ recalculate_convex_hull_thread (void *args UNUSED)
 static void
 preinit_convex_hull_assets (void)
 {
-  setup_points ();
-  kmg_to_img ("/rd/spheremap.kmg", &envmap_txr);
+  static int initialised = 0;
+  
+  if (!initialised)
+    {
+      setup_points ();
+
+      kmg_to_img ("/rd/spheremap.kmg", &envmap_txr);
+      envmap_texaddr = pvr_mem_malloc (envmap_txr.byte_count);
+      pvr_txr_load_kimg (&envmap_txr, envmap_texaddr, KOS_IMG_FMT_RGB565);
+      kos_img_free (&envmap_txr, 0);
+      
+      initialised = 1;
+    }
 }
 
 static void
 finalize_convex_hull (void *params UNUSED)
 {
-  kos_img_free (&envmap_txr, 0);
 }
 
-void
+static void
 init_convex_hull_effect (void *params)
 {
   convex_hull_data *cdata = params;
   int rc;
-
-  envmap_texaddr = pvr_mem_malloc (envmap_txr.byte_count);
-  pvr_txr_load_kimg (&envmap_txr, envmap_texaddr, KOS_IMG_FMT_RGB565);
   
   //glKosInit ();
 
@@ -1354,25 +1249,33 @@ init_convex_hull_effect (void *params)
 	     0.0, 0.0,   0.0,		/* Centre.  */
 	     0.0, 1.0,   0.0);		/* Up.  */
 
+  ask_quit = 0;
+  drawing_face = 0;
+  faces[0] = faces[1] = NULL;
+
   rc = pthread_create (&cdata->conv_hull_thread, NULL,
 		       recalculate_convex_hull_thread, NULL);
   if (rc != 0)
     printf ("Couldn't create thread!\n");
 }
 
-void
+static void
 display_convex_hull_effect (uint32_t time_offset UNUSED, void *params UNUSED,
 			    int iparam)
 {
+  pthread_mutex_lock (&move_points_mutex);
+  points_mode = iparam >> 1;
+  pthread_mutex_unlock (&move_points_mutex);
+
   pthread_mutex_lock (&recalc_face_mutex);
   if (faces[drawing_face])
-    draw_convex_hull (faces[drawing_face], iparam);
+    draw_convex_hull (faces[drawing_face], iparam & 1);
   pthread_mutex_unlock (&recalc_face_mutex);
 
   glKosFinishList ();
 }
 
-void
+static void
 uninit_convex_hull_effect (void *params)
 {
   convex_hull_data *cdata = params;
@@ -1391,13 +1294,13 @@ convex_hull_data convex_hull_0;
 
 effect_methods convex_hull_methods =
 {
-  preinit_convex_hull_assets,
-  init_convex_hull_effect,
-  NULL,
-  NULL,
-  display_convex_hull_effect,
-  uninit_convex_hull_effect,
-  finalize_convex_hull
+  .preinit_assets = &preinit_convex_hull_assets,
+  .init_effect = &init_convex_hull_effect,
+  .prepare_frame = NULL,
+  .display_effect = NULL,
+  .gl_effect = &display_convex_hull_effect,
+  .uninit_effect = &uninit_convex_hull_effect,
+  .finalize = &finalize_convex_hull
 };
 
 #if 0
