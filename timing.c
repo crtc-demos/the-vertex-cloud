@@ -4,10 +4,12 @@
 #include <stdlib.h>
 #include <alloca.h>
 #include <stdint.h>
+#include <assert.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include <kos.h>
 
@@ -16,6 +18,7 @@
 
 #include <png/png.h>
 #include <kmg/kmg.h>
+#include <modplug/modplug.h>
 
 #include "convex.h"
 #include "banner.h"
@@ -41,11 +44,11 @@ KOS_INIT_ROMDISK (romdisk);
 static do_thing_at sequence[] = {
 #if 1
   //{      0,  20000, &convex_hull_methods, &convex_hull_0, 2, 0 },
-  {      0,  10000, &banner_methods, &banner_0, 0, 0 },
-  {  10000,  70000, &convex_hull_methods, &convex_hull_0, 0, 0 },
-  {  70000,  80000, &banner_methods, &banner_1, 0, 0 },
-  {  80000, 135000, &convex_hull_methods, &convex_hull_0, 1, 1 },
-  { 135000, 140000, &banner_methods, &banner_2, 0, 0 },
+  {      0,  15000, &banner_methods, &banner_0, 0, 0 },
+  {  15000,  35000, &convex_hull_methods, &convex_hull_0, 0, 0 },
+  {  35000,  48000, &banner_methods, &banner_1, 0, 0 },
+  {  48000,  95000, &convex_hull_methods, &convex_hull_0, 1, 1 },
+  {  95000, 109000, &banner_methods, &banner_2, 0, 0 },
 #else
 
   { 0, 300000, &wave_methods, NULL, 0, 0 },
@@ -71,6 +74,42 @@ static do_thing_at sequence[] = {
 
 static unsigned int current_millis;
 
+static ModPlugFile *mpfile;
+
+static uint8 *pcm_buffer;
+
+static void *
+modplug_callback (snd_stream_hnd_t hnd UNUSED, int smp_req, int *smp_recv)
+{
+  int bytes, fetch;
+  
+  fetch = (smp_req >= SND_STREAM_BUFFER_MAX) ? SND_STREAM_BUFFER_MAX : smp_req;
+  bytes = ModPlug_Read (mpfile, pcm_buffer, fetch);
+  *smp_recv = bytes;
+  return pcm_buffer;
+}
+
+static volatile int terminate_sound = 0;
+static pthread_mutex_t terminate_sound_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void *
+modplug_fill_thread (void *args)
+{
+  snd_stream_hnd_t sndstream_hnd = *(snd_stream_hnd_t *) args;
+  int quit = 0;
+
+  while (!quit)
+    {
+      snd_stream_poll (sndstream_hnd);
+      pthread_mutex_lock (&terminate_sound_mutex);
+      quit = terminate_sound;
+      pthread_mutex_unlock (&terminate_sound_mutex);
+      //thd_sleep (50);
+    }
+  
+  return NULL;
+}
+
 static void
 init_pvr (void)
 {
@@ -92,14 +131,21 @@ int
 main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 {
   int cable_type;
-  int quit = 0;
+  int quit = 0, rc;
   uint64_t start_time;
   unsigned int i;
   unsigned int next_effect;
   do_thing_at *active_effects[MAX_ACTIVE];
   unsigned int num_active_effects;
   const unsigned int num_effects = ARRAY_SIZE (sequence);
+  int sndstream_hnd;
+  FILE *f;
+  struct stat statbuf;
+  void *moddata;
   //uint64_t before_sending, after_sending;
+  pthread_t sound_thread_hnd;
+  void *status;
+  ModPlug_Settings mp_settings;
 
   cable_type = vid_check_cable ();
   if (cable_type == CT_VGA)
@@ -141,6 +187,50 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
   offset_time = SKIP_TO_TIME;
 #endif
   
+  rc = stat ("/rd/lamb_-_setting_sun.xm", &statbuf);
+  if (rc != 0)
+    {
+      printf ("couldn't stat file\n");
+      exit (1);
+    }
+  moddata = malloc (statbuf.st_size);
+  
+  printf ("Reading tracker module (%d bytes)\n", (int) statbuf.st_size);
+  f = fopen ("/rd/lamb_-_setting_sun.xm", "r");
+  fread (moddata, 1, statbuf.st_size, f);
+  fclose (f);
+  
+  ModPlug_GetSettings (&mp_settings);
+  mp_settings.mChannels = 2;
+  mp_settings.mBits = 16;
+  mp_settings.mFrequency = 44100;
+  mp_settings.mResamplingMode = MODPLUG_RESAMPLE_SPLINE;
+  mp_settings.mReverbDepth = 0;
+  mp_settings.mReverbDelay = 0;
+  mp_settings.mBassAmount = 0;
+  mp_settings.mSurroundDepth = 0;
+  mp_settings.mLoopCount = 0;
+  ModPlug_SetSettings (&mp_settings);
+  
+  mpfile = ModPlug_Load (moddata, statbuf.st_size);
+  
+  printf ("Loaded module: %p\n", mpfile);
+  
+  snd_stream_init ();
+  sndstream_hnd = snd_stream_alloc (modplug_callback, SND_STREAM_BUFFER_MAX);
+  
+  pcm_buffer = malloc (SND_STREAM_BUFFER_MAX * 4);
+  
+  rc = pthread_create (&sound_thread_hnd, NULL, &modplug_fill_thread,
+		       &sndstream_hnd);
+  if (rc != 0)
+    {
+      printf ("Couldn't start sound thread (%d)\n", rc);
+      exit (1);
+    }
+  
+  snd_stream_start (sndstream_hnd, 44100, 1);
+    
   while (!quit)
     {
       uint64_t current_time;
@@ -350,6 +440,16 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 	active_effects[i]->methods->uninit_effect (
 	  active_effects[i]->params);
       }
+
+  pthread_mutex_lock (&terminate_sound_mutex);
+  terminate_sound = 1;
+  pthread_mutex_unlock (&terminate_sound_mutex);
+
+  rc = pthread_join (sound_thread_hnd, &status);
+  printf ("Terminated sound buffer filling thread (%d)\n", rc);
+
+  snd_stream_destroy (sndstream_hnd);
+  snd_stream_shutdown ();
 
   glKosShutdown ();
   pvr_shutdown ();

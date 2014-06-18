@@ -2,7 +2,7 @@
 	CC = 		kos-cc
 	STRIP =		strip
 	CFLAGS =	-O2 -W -Wall
-	LIBS =		 -lgl -lkmg -lkosutils -lpng -lz -lm
+	LIBS =		 -lgl -lkmg -lkosutils -lpng -lz -lm -lmodplug -lstdc++
 	LDFLAGS =	
 	GENROMFS =      $(KOS_GENROMFS)
 

@@ -69,7 +69,9 @@ init_effect (void *params)
 {
   banner_data *data = params;
   
+  //printf ("pvr_mem_malloc: ");
   data->texture = pvr_mem_malloc (1024 * 512 * 2);
+  //printf ("returned %p\n", data->texture);
   png_to_texture (data->image, data->texture, PNG_NO_ALPHA);
 }
 
@@ -78,6 +80,7 @@ uninit_effect (void *params)
 {
   banner_data *data = params;
   
+  //printf ("pvr_mem_free: %p\n", data->texture);
   pvr_mem_free (data->texture);
 }
 

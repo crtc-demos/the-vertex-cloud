@@ -20,7 +20,7 @@
 
 #include "convex.h"
 
-#define NUMPOINTS 500
+#define NUMPOINTS 2000
 #if 0
 #define debug_printf(...) printf (__VA_ARGS__)
 #else
@@ -70,10 +70,102 @@ typedef struct hfedgeref_list
   struct hfedgeref_list *next;
 } hfedgeref_list;
 
+#define DEBUG_POOLS
+
+typedef struct mem_pool {
+  char *buffer;
+  unsigned int used;
+  unsigned int capacity;
+  struct mem_pool *next;
+} mem_pool;
+
+static mem_pool pools[2] = {
+  { .buffer = NULL, .used = 0, .capacity = 0, .next = NULL },
+  { .buffer = NULL, .used = 0, .capacity = 0, .next = NULL }
+};
+
+static mem_pool *current_pool = NULL;
+
+#define POOL_PART_SIZE	(64 * 1024)
+
+static void
+pool_clear (mem_pool *pool)
+{
+  if (pool->buffer == NULL)
+    {
+      /* Make an initial pool.  */
+      pool->buffer = malloc (POOL_PART_SIZE);
+      pool->used = 0;
+      pool->capacity = POOL_PART_SIZE;
+      pool->next = NULL;
+    }
+  else
+    {
+      mem_pool *iter;
+  
+      for (iter = pool; iter; iter = iter->next)
+	iter->used = 0;
+    }
+
+  current_pool = pool;
+}
+
+static void *
+pool_alloc (unsigned int amt)
+{
+retry:
+  if (current_pool->used + amt > current_pool->capacity)
+    {
+      mem_pool *newpart;
+      unsigned int newsize = (amt > POOL_PART_SIZE) ? amt : POOL_PART_SIZE;
+      
+      if (current_pool->next != NULL)
+        {
+	  current_pool = current_pool->next;
+          goto retry;
+	}
+      
+      newpart = malloc (sizeof (mem_pool));
+
+#ifdef DEBUG_POOLS
+      printf ("Pool allocator: allocating new part (size %u)\n", newsize);
+#endif
+      
+      current_pool->next = newpart;
+      
+      newpart->buffer = malloc (newsize);
+      newpart->used = amt;
+      newpart->capacity = newsize;
+      newpart->next = NULL;
+      
+      current_pool = newpart;
+      
+      return &newpart->buffer[0];
+    }
+  else
+    {
+      char *block = &current_pool->buffer[current_pool->used];
+
+      current_pool->used += amt;
+      
+      return block;
+    }
+}
+
+#if 1
+#define MALLOC(X) pool_alloc (X)
+#define FREE(X)
+#else
+#define MALLOC(X) malloc(X)
+#define FREE(X) free(X)
+#endif
+
 vertex_info *
 add_vertex (vec3 vec, halfedge_info *halfedge, vertex_info *prev)
 {
-  vertex_info *newvtx = malloc (sizeof (vertex_info));
+  vertex_info *newvtx = MALLOC (sizeof (vertex_info));
+  
+  assert (newvtx);
   
   memcpy (newvtx->vertex, vec, sizeof (FLOATTYPE) * 3);
 
@@ -87,7 +179,9 @@ add_vertex (vec3 vec, halfedge_info *halfedge, vertex_info *prev)
 face_info *
 add_face (halfedge_info *halfedge, face_info *prev)
 {
-  face_info *newface = malloc (sizeof (face_info));
+  face_info *newface = MALLOC (sizeof (face_info));
+  
+  assert (newface);
   
   assert (halfedge != NULL);
   
@@ -103,7 +197,9 @@ add_face (halfedge_info *halfedge, face_info *prev)
 void
 push_face (face_info *face, faceref_list **stack)
 {
-  faceref_list *newfr = malloc (sizeof (faceref_list));
+  faceref_list *newfr = MALLOC (sizeof (faceref_list));
+  
+  assert (newfr);
   
   newfr->face = face;
   newfr->next = *stack;
@@ -122,7 +218,7 @@ pop_face (faceref_list **stack)
   next = (*stack)->next;
   popped = (*stack)->face;
 
-  free (*stack);
+  FREE (*stack);
   *stack = next;
 
   return popped;
@@ -131,7 +227,9 @@ pop_face (faceref_list **stack)
 halfedge_info *
 add_halfedge (face_info *face, vertex_info *vertex)
 {
-  halfedge_info *newhalfedge = malloc (sizeof (halfedge_info));
+  halfedge_info *newhalfedge = MALLOC (sizeof (halfedge_info));
+  
+  assert (newhalfedge);
   
   newhalfedge->face = face;
   newhalfedge->vertex = vertex;
@@ -146,7 +244,9 @@ add_halfedge (face_info *face, vertex_info *vertex)
 void
 push_halfedge (halfedge_info *halfedge, hfedgeref_list **list)
 {
-  hfedgeref_list *newhe = malloc (sizeof (hfedgeref_list));
+  hfedgeref_list *newhe = MALLOC (sizeof (hfedgeref_list));
+  
+  assert (newhe);
   
   newhe->halfedge = halfedge;
   newhe->next = *list;
@@ -165,7 +265,7 @@ pop_halfedge (hfedgeref_list **list)
   next = (*list)->next;
   halfedge = (*list)->halfedge;
   
-  free (*list);
+  FREE (*list);
   *list = next;
   
   return halfedge;
@@ -514,7 +614,7 @@ assign_points (face_info *flist, faceref_list *frlist, bool delete_unused)
 	    if (vptr->halfedge == NULL)
 	      {
 	        //printf ("FREE UNUSED IN ASSIGN_POINTS: %p\n", vptr);
-	        free (vptr);
+	        FREE (vptr);
 	      }
 	    vptr = next;
 	  }
@@ -714,7 +814,7 @@ replace_faces (faceref_list *visible, hfedgeref_list **horizon_edges,
           {
 	    halfedge_info *next = halfedge->next;
 	    assert (halfedge->face == face);
-	    free (halfedge);
+	    FREE (halfedge);
 	    halfedge = next;
 	  }
 	while (halfedge != first);
@@ -777,7 +877,7 @@ restart:
       while (frlist)
         {
 	  faceref_list *next = frlist->next;
-	  free (frlist);
+	  FREE (frlist);
 	  frlist = next;
 	}
 
@@ -836,7 +936,7 @@ cleanup (face_info **faces)
 	        {
 		  debug_printf ("deleting vertex %p\n", vptr);
 		  //printf ("DELETE IN CLEANUP: %p (face=%p)\n", vptr, fptr);
-		  free (vptr);
+		  FREE (vptr);
 		}
 	      /*else
 	        printf ("HALFEDGE NOT NULL: %p (face=%p)\n", vptr, fptr);*/
@@ -845,7 +945,7 @@ cleanup (face_info **faces)
 
           debug_printf ("deleting face %p\n", fptr);
 	  //printf ("DELETE FACE IN CLEANUP: %p\n", fptr);
-	  free (fptr);
+	  FREE (fptr);
 	}
     
       fptr = next;
@@ -931,7 +1031,7 @@ free_vertex_list (vertex_info *vlist)
     {
       vertex_info *next = vlist->next;
       //printf ("DELETE WITH CONVEX HULL: %p\n", vlist);
-      free (vlist);
+      FREE (vlist);
       vlist = next;
     }
 }
@@ -954,13 +1054,13 @@ delete_convex_hull (face_info **faces)
       do
         {
 	  halfedge_info *next = hptr->next;
-	  free (hptr);
+	  FREE (hptr);
 	  hptr = next;
 	}
       while (hptr != first);
 
       //printf ("DELETE CONVEX HULL FACE: %p\n", fptr);
-      free (fptr);
+      FREE (fptr);
 
       fptr = next;
     }
@@ -1096,6 +1196,7 @@ draw_convex_hull (face_info *fptr, int draw_type)
       hptr = first;
       for (i = 0; i < 3; i++)
         {
+	  //printf ("copying %p to %p\n", hptr->vertex->vertex, pts[i]);
 	  memcpy (pts[i], hptr->vertex->vertex, sizeof (FLOATTYPE) * 3);
 	  hptr = hptr->prev;
 	}
@@ -1181,6 +1282,7 @@ recalculate_convex_hull_thread (void *args UNUSED)
 	  continue;
 	}
 
+      pool_clear (&pools[recalc_face]);
       init_convex_hull (&faces[recalc_face], &facestack,
 			vertex_list (points, num_points));
       convex_hull_step (&faces[recalc_face], &facestack, true);
@@ -1189,6 +1291,9 @@ recalculate_convex_hull_thread (void *args UNUSED)
       drawing_face = recalc_face;
       pthread_mutex_unlock (&recalc_face_mutex);
     }
+  
+  if (faces[drawing_face])
+    delete_convex_hull (&faces[drawing_face]);
 
   return NULL;
 }
@@ -1255,8 +1360,10 @@ init_convex_hull_effect (void *params)
 
   rc = pthread_create (&cdata->conv_hull_thread, NULL,
 		       recalculate_convex_hull_thread, NULL);
-  if (rc != 0)
-    printf ("Couldn't create thread!\n");
+  if (rc == 0)
+    printf ("Created convex hull worker thread\n");
+  else
+    printf ("Couldn't create thread! (%d)\n", rc);
 }
 
 static void
