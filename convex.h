@@ -6,6 +6,7 @@
 typedef struct
 {
   pthread_t conv_hull_thread;
+  pvr_ptr_t sun_txr;
 } convex_hull_data;
 
 extern effect_methods convex_hull_methods;

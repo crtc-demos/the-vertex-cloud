@@ -28,7 +28,7 @@
 #undef DEBUG
 
 #undef SKIP_TO_TIME
-//#define SKIP_TO_TIME 135000
+//#define SKIP_TO_TIME 46000
 
 #ifdef SKIP_TO_TIME
 uint64_t offset_time = 0;
@@ -230,6 +230,10 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
     }
   
   snd_stream_start (sndstream_hnd, 44100, 1);
+
+#ifdef SKIP_TO_TIME
+  //ModPlug_Seek (mpfile, SKIP_TO_TIME);
+#endif
     
   while (!quit)
     {

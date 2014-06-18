@@ -7,6 +7,7 @@
 #include <kos.h>
 #include <pthread.h>
 #include <kmg/kmg.h>
+#include <png/png.h>
 
 #include <GL/gl.h>
 #include <GL/glu.h>
@@ -1148,17 +1149,19 @@ move_points_twist (void)
   return count;
 }
 
-static float rotational = 0.0;
 static kos_img_t envmap_txr;
 static pvr_ptr_t envmap_texaddr;
 static GLuint envmap_binding;
 
+/* We use this later, so make it global.  */
+static GLfloat mview[16];
+
 static void
-draw_convex_hull (face_info *fptr, int draw_type)
+draw_convex_hull (face_info *fptr, int draw_type, float rotational)
 {
   vec3 eyepos = { 0.0, 0.0, -10.0 };
   vec3 v_eyedir = { 0.0, 0.0, -1.0 };
-  GLfloat mview[16], rotpart[16];
+  GLfloat rotpart[16];
   
   glPushMatrix ();
   glRotatef (rotational, 0.0, 1.0, 0.0);
@@ -1321,11 +1324,25 @@ finalize_convex_hull (void *params UNUSED)
 {
 }
 
+static matrix_t projection __attribute__((aligned(32)));
+
+static matrix_t screen_mat __attribute__((aligned(32))) =
+  {
+    { 320.0,  0,     0, 0 },
+    { 0,     -240.0, 0, 0 },
+    { 0,      0,     1, 0 },
+    { 320.0,  240.0, 0, 1 }
+  };
+
+#define SUNS 50
+
+static vec3 sunpoints[SUNS];
+
 static void
 init_convex_hull_effect (void *params)
 {
   convex_hull_data *cdata = params;
-  int rc;
+  int i, rc;
   
   //glKosInit ();
 
@@ -1347,6 +1364,13 @@ init_convex_hull_effect (void *params)
 		  640.0 / 480.0,	/* Aspect ratio.  */
 		  1.0,			/* Z near.  */
 		  50.0);		/* Z far.  */
+  glGetFloatv (GL_PROJECTION_MATRIX, (GLfloat *) &projection);
+
+  mat_load (&screen_mat);
+  mat_apply (&projection);
+  mat_store (&projection);
+  
+  glKosMatrixDirty ();
 
   glMatrixMode (GL_MODELVIEW);
   glLoadIdentity ();
@@ -1358,28 +1382,133 @@ init_convex_hull_effect (void *params)
   drawing_face = 0;
   faces[0] = faces[1] = NULL;
 
+  cdata->sun_txr = pvr_mem_malloc (256 * 256 * 2);
+  png_to_texture ("/rd/sun.png", cdata->sun_txr, PNG_MASK_ALPHA);
+
   rc = pthread_create (&cdata->conv_hull_thread, NULL,
 		       recalculate_convex_hull_thread, NULL);
   if (rc == 0)
     printf ("Created convex hull worker thread\n");
   else
     printf ("Couldn't create thread! (%d)\n", rc);
+  
+  for (i = 0; i < SUNS; i++)
+    {
+      float x, y, z, radius;
+
+      do
+        {
+	  x = drand48 () * 8.0 - 4.0;
+	  y = drand48 () * 8.0 - 4.0;
+	  z = drand48 () * 8.0 - 4.0;
+	  radius = sqrt (x * x + y * y + z * z);
+	}
+      while (radius < 2.0 || radius > 4.0);
+
+      sunpoints[i][0] = x;
+      sunpoints[i][1] = y;
+      sunpoints[i][2] = z;
+    }
 }
 
 static void
-display_convex_hull_effect (uint32_t time_offset UNUSED, void *params UNUSED,
+display_convex_hull_effect (uint32_t time_offset, void *params,
 			    int iparam)
 {
+  convex_hull_data *cdata = params;
+  pvr_poly_cxt_t cxt;
+  pvr_poly_hdr_t poly;
+  pvr_vertex_t vert;
+  int i;
+  const float sundown = 29000.0f;
+
   pthread_mutex_lock (&move_points_mutex);
   points_mode = iparam >> 1;
   pthread_mutex_unlock (&move_points_mutex);
 
   pthread_mutex_lock (&recalc_face_mutex);
   if (faces[drawing_face])
-    draw_convex_hull (faces[drawing_face], iparam & 1);
+    draw_convex_hull (faces[drawing_face], iparam & 1, time_offset / 20.0);
   pthread_mutex_unlock (&recalc_face_mutex);
 
   glKosFinishList ();
+
+  if (iparam == 1 && time_offset > sundown)
+    {
+      pvr_poly_cxt_txr (&cxt, PVR_LIST_TR_POLY,
+			PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_TWIDDLED, 256, 256,
+			cdata->sun_txr, PVR_FILTER_BILINEAR);
+
+      cxt.blend.src = PVR_BLEND_SRCALPHA;
+      cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
+
+      pvr_poly_compile (&poly, &cxt);
+
+      mat_load (&projection);
+
+      for (i = 0; i < SUNS; i++)
+	{
+	  vec3 cent, higher;
+	  float size;
+	  float drop;
+
+	  transp_mat44_mul_vec3 (cent, mview, sunpoints[i]);
+	  higher[0] = cent[0];
+	  higher[1] = cent[1] - 0.5;
+	  higher[2] = cent[2];
+	  
+	  drop = (time_offset - sundown) / 100.0 - (5.0 + i);
+	  
+	  if (drop > 0)
+	    drop = 0;
+	  
+	  cent[1] -= drop;
+	  higher[1] -= drop;
+	  
+	  mat_trans_single (cent[0], cent[1], cent[2]);
+	  mat_trans_single (higher[0], higher[1], higher[2]);
+
+	 // printf ("%f %f\n", cent[0], cent[1]);
+
+	  size = higher[1] - cent[1];
+
+	  pvr_prim (&poly, sizeof (poly));
+
+	  vert.flags = PVR_CMD_VERTEX;
+	  vert.x = cent[0] - size;
+	  vert.y = cent[1] + size;
+	  vert.z = cent[2];
+	  vert.u = 0.0f;
+	  vert.v = 1.0f;
+	  vert.argb = 0x80ffffff;
+	  vert.oargb = 0x0;
+	  pvr_prim (&vert, sizeof (vert));
+
+	  vert.x = cent[0] - size;
+	  vert.y = cent[1] - size;
+	  vert.u = 0.0f;
+	  vert.v = 0.0f;
+	  pvr_prim (&vert, sizeof (vert));
+
+	  vert.x = cent[0] + size;
+	  vert.y = cent[1] + size;
+	  vert.u = 1.0f;
+	  vert.v = 1.0f;
+	  pvr_prim (&vert, sizeof (vert));
+
+	  vert.flags = PVR_CMD_VERTEX_EOL;
+	  vert.x = cent[0] + size;
+	  vert.y = cent[1] - size;
+	  vert.u = 1.0f;
+	  vert.v = 0.0f;
+	  pvr_prim (&vert, sizeof (vert));
+	}
+
+      glKosMatrixDirty ();
+
+      //pvr_list_finish ();
+      glKosFinishList ();
+   }
 }
 
 static void
@@ -1395,6 +1524,8 @@ uninit_convex_hull_effect (void *params)
   
   rc = pthread_join (cdata->conv_hull_thread, &status);
   printf ("Joined with convex hull thread (%d)\n", rc);
+  
+  pvr_mem_free (cdata->sun_txr);
 }
 
 convex_hull_data convex_hull_0;
