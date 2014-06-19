@@ -151,7 +151,7 @@ main (int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
   if (cable_type == CT_VGA)
     vid_init (DM_640x480_VGA, PM_RGB565);
   else
-    vid_init (DM_640x480_NTSC_IL, PM_RGB565);
+    vid_init (DM_640x480_PAL_IL, PM_RGB565);
 
   init_pvr ();
 
