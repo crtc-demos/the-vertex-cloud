@@ -71,8 +71,10 @@ typedef struct hfedgeref_list
   struct hfedgeref_list *next;
 } hfedgeref_list;
 
-#define DEBUG_POOLS
+#define USE_POOLS
+#undef DEBUG_POOLS
 
+#ifdef USE_POOLS
 typedef struct mem_pool {
   char *buffer;
   unsigned int used;
@@ -153,12 +155,14 @@ retry:
     }
 }
 
-#if 1
 #define MALLOC(X) pool_alloc (X)
 #define FREE(X)
-#else
+
+#else  /* !USE_POOLS */
+
 #define MALLOC(X) malloc(X)
 #define FREE(X) free(X)
+
 #endif
 
 vertex_info *
@@ -1040,6 +1044,7 @@ free_vertex_list (vertex_info *vlist)
 void
 delete_convex_hull (face_info **faces)
 {
+#ifndef USE_POOLS
   face_info *fptr;
   
   free_vertex_list (get_vertex_list (*faces));
@@ -1066,6 +1071,7 @@ delete_convex_hull (face_info **faces)
       fptr = next;
     }
 
+#endif
   *faces = NULL;
 }
 
@@ -1101,7 +1107,7 @@ static volatile unsigned int points_mode = 0;
 static unsigned int
 move_points (unsigned int numpoints)
 {
-  int i;
+  unsigned int i;
   const float t = 0.01;
   
   for (i = 0; i < numpoints; i++)
@@ -1153,15 +1159,15 @@ static kos_img_t envmap_txr;
 static pvr_ptr_t envmap_texaddr;
 static GLuint envmap_binding;
 
-/* We use this later, so make it global.  */
+/* We use these later, so make it global.  */
 static GLfloat mview[16];
+static GLfloat rotpart[16];
 
 static void
 draw_convex_hull (face_info *fptr, int draw_type, float rotational)
 {
   vec3 eyepos = { 0.0, 0.0, -10.0 };
   vec3 v_eyedir = { 0.0, 0.0, -1.0 };
-  GLfloat rotpart[16];
   
   glPushMatrix ();
   glRotatef (rotational, 0.0, 1.0, 0.0);
@@ -1181,7 +1187,8 @@ draw_convex_hull (face_info *fptr, int draw_type, float rotational)
     {
       glEnable (GL_TEXTURE_2D);
       glBindTexture (GL_TEXTURE_2D, envmap_binding);
-      glKosTex2D (/*PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_TWIDDLED | PVR_TXRFMT_ARGB4444*/ PVR_TXRFMT_RGB565 | PVR_TXRFMT_TWIDDLED,
+      /*PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_TWIDDLED | PVR_TXRFMT_ARGB4444*/
+      glKosTex2D (PVR_TXRFMT_RGB565 | PVR_TXRFMT_TWIDDLED,
 		  1024, 1024, envmap_texaddr);
     }
   
@@ -1247,6 +1254,104 @@ draw_convex_hull (face_info *fptr, int draw_type, float rotational)
   glPopMatrix ();
 }
 
+typedef struct fragment_info
+{
+  vec3 pts[3];
+  vec3 vel;
+  struct fragment_info *next;
+} fragment_info;
+
+static mem_pool smash_pool =
+  { .buffer = NULL, .used = 0, .capacity = 0, .next = NULL };
+
+fragment_info *
+smash_object (face_info *fptr)
+{
+  fragment_info *frags = NULL;
+  mem_pool *save_pool = current_pool;
+
+  pool_clear (&smash_pool);
+
+  for (; fptr != NULL; fptr = fptr->next)
+    {
+      halfedge_info *hptr = fptr->halfedge;
+      fragment_info *newfrag;
+      int i;
+      
+      newfrag = MALLOC (sizeof (fragment_info));
+      newfrag->next = frags;
+      frags = newfrag;
+      
+      for (i = 0; i < 3; i++)
+        {
+	  transp_mat44_mul_vec3 (newfrag->pts[i], mview, hptr->vertex->vertex);
+	  hptr = hptr->prev;
+	}
+      /* Just any old vertex.  */
+      transp_mat44_mul_vec3 (newfrag->vel, rotpart, hptr->vertex->vertex);
+      vec3_scale (newfrag->vel, newfrag->vel, 0.04);
+      newfrag->vel[1] += 0.1;
+    }
+  
+  current_pool = save_pool;
+  
+  return frags;
+}
+
+static void
+draw_smashed (fragment_info *frags)
+{
+  vec3 eyepos = { 0.0, 0.0, -10.0 };
+  vec3 v_eyedir = { 0.0, 0.0, -1.0 };
+  int i;
+
+  glMatrixMode (GL_MODELVIEW);
+  glLoadIdentity ();
+  
+  glEnable (GL_TEXTURE_2D);
+  glBindTexture (GL_TEXTURE_2D, envmap_binding);
+  glKosTex2D (PVR_TXRFMT_RGB565 | PVR_TXRFMT_TWIDDLED,
+	      1024, 1024, envmap_texaddr);
+
+  glBegin (GL_TRIANGLES);
+  for (; frags != NULL; frags = frags->next)
+    {
+      vec3 pts[3], incident, reflect, tmp;
+      FLOATTYPE norm_dot_incident;
+      
+      memcpy (pts, frags->pts, sizeof (FLOATTYPE) * 9);
+      
+      vec3_sub_vec3 (pts[2], pts[2], pts[0]);
+      vec3_sub_vec3 (pts[1], pts[1], pts[0]);
+      vec3_cross_vec3 (pts[0], pts[1], pts[2]);
+      vec3_normalize (pts[0], pts[0]);
+
+      glColor3f (1.0, 1.0, 1.0);
+      
+      for (i = 0; i < 3; i++)
+        {
+	  vec3_sub_vec3 (incident, frags->pts[i], eyepos);
+	  vec3_normalize (incident, incident);
+	  norm_dot_incident = vec3_dot_vec3 (pts[0], incident);
+	  vec3_scale (tmp, pts[0], 2 * norm_dot_incident);
+	  vec3_add_vec3 (reflect, incident, tmp);
+
+	  vec3_add_vec3 (reflect, reflect, v_eyedir);
+	  vec3_normalize (reflect, reflect);
+
+	  glTexCoord2f (0.5+0.5*reflect[0], 0.5-0.5*reflect[1]);
+	  glVertex3fv (frags->pts[i]);
+	  
+	  frags->pts[i][0] += frags->vel[0];
+	  frags->pts[i][1] += frags->vel[1];
+	  frags->pts[i][2] += frags->vel[2];
+	}
+
+      frags->vel[1] -= 0.007;
+    }
+  glEnd ();
+}
+
 static pthread_mutex_t recalc_face_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t ask_quit_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -1285,7 +1390,9 @@ recalculate_convex_hull_thread (void *args UNUSED)
 	  continue;
 	}
 
+#ifdef USE_POOLS
       pool_clear (&pools[recalc_face]);
+#endif
       init_convex_hull (&faces[recalc_face], &facestack,
 			vertex_list (points, num_points));
       convex_hull_step (&faces[recalc_face], &facestack, true);
@@ -1294,7 +1401,7 @@ recalculate_convex_hull_thread (void *args UNUSED)
       drawing_face = recalc_face;
       pthread_mutex_unlock (&recalc_face_mutex);
     }
-  
+
   if (faces[drawing_face])
     delete_convex_hull (&faces[drawing_face]);
 
@@ -1409,6 +1516,8 @@ init_convex_hull_effect (void *params)
       sunpoints[i][1] = y;
       sunpoints[i][2] = z;
     }
+
+  cdata->fragmented = NULL;
 }
 
 static void
@@ -1426,10 +1535,22 @@ display_convex_hull_effect (uint32_t time_offset, void *params,
   points_mode = iparam >> 1;
   pthread_mutex_unlock (&move_points_mutex);
 
-  pthread_mutex_lock (&recalc_face_mutex);
-  if (faces[drawing_face])
-    draw_convex_hull (faces[drawing_face], iparam & 1, time_offset / 20.0);
-  pthread_mutex_unlock (&recalc_face_mutex);
+  if (time_offset > 45000 && iparam == 1 && cdata->fragmented == NULL)
+    {
+      pthread_mutex_lock (&recalc_face_mutex);
+      cdata->fragmented = smash_object (faces[drawing_face]);
+      pthread_mutex_unlock (&recalc_face_mutex);
+    }
+    
+  if (!cdata->fragmented)
+    {
+      pthread_mutex_lock (&recalc_face_mutex);
+      if (faces[drawing_face])
+	draw_convex_hull (faces[drawing_face], iparam & 1, time_offset / 20.0);
+      pthread_mutex_unlock (&recalc_face_mutex);
+    }
+  else
+    draw_smashed (cdata->fragmented);
 
   glKosFinishList ();
 

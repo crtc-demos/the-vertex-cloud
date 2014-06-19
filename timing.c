@@ -27,8 +27,8 @@
 #undef HOLD
 #undef DEBUG
 
-#undef SKIP_TO_TIME
-//#define SKIP_TO_TIME 46000
+//#undef SKIP_TO_TIME
+#define SKIP_TO_TIME 46000
 
 #ifdef SKIP_TO_TIME
 uint64_t offset_time = 0;
