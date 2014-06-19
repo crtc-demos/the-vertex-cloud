@@ -1444,6 +1444,7 @@ static matrix_t screen_mat __attribute__((aligned(32))) =
 #define SUNS 50
 
 static vec3 sunpoints[SUNS];
+static vec3 sunvel[SUNS];
 
 static void
 init_convex_hull_effect (void *params)
@@ -1515,6 +1516,9 @@ init_convex_hull_effect (void *params)
       sunpoints[i][0] = x;
       sunpoints[i][1] = y;
       sunpoints[i][2] = z;
+      sunvel[i][0] = x * 0.04;
+      sunvel[i][1] = y * 0.04 + 0.1;
+      sunvel[i][2] = z * 0.04;
     }
 
   cdata->fragmented = NULL;
@@ -1535,11 +1539,13 @@ display_convex_hull_effect (uint32_t time_offset, void *params,
   points_mode = iparam >> 1;
   pthread_mutex_unlock (&move_points_mutex);
 
-  if (time_offset > 45000 && iparam == 1 && cdata->fragmented == NULL)
+  if (time_offset > 44500 && iparam == 1 && cdata->fragmented == NULL)
     {
       pthread_mutex_lock (&recalc_face_mutex);
       cdata->fragmented = smash_object (faces[drawing_face]);
       pthread_mutex_unlock (&recalc_face_mutex);
+      for (i = 0; i < SUNS; i++)
+        transp_mat44_mul_vec3 (sunpoints[i], mview, sunpoints[i]);
     }
     
   if (!cdata->fragmented)
@@ -1573,7 +1579,11 @@ display_convex_hull_effect (uint32_t time_offset, void *params,
 	  float size;
 	  float drop;
 
-	  transp_mat44_mul_vec3 (cent, mview, sunpoints[i]);
+          if (!cdata->fragmented)
+	    transp_mat44_mul_vec3 (cent, mview, sunpoints[i]);
+	  else
+	    memcpy (cent, sunpoints[i], sizeof (FLOATTYPE) * 3);
+
 	  higher[0] = cent[0];
 	  higher[1] = cent[1] - 0.5;
 	  higher[2] = cent[2];
@@ -1582,6 +1592,14 @@ display_convex_hull_effect (uint32_t time_offset, void *params,
 	  
 	  if (drop > 0)
 	    drop = 0;
+	  
+	  if (cdata->fragmented)
+	    {
+	      sunpoints[i][0] += sunvel[i][0];
+	      sunpoints[i][1] += sunvel[i][1];
+	      sunpoints[i][2] += sunvel[i][2];
+	      sunvel[i][1] -= 0.007;
+	    }
 	  
 	  cent[1] -= drop;
 	  higher[1] -= drop;
